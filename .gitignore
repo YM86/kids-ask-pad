@@ -1,0 +1,12 @@
+# Run-time data, local API keys, and logs (never commit)
+data/
+*.env
+.env*
+config.json
+spend.json
+tokens.json
+qa-*.jsonl
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

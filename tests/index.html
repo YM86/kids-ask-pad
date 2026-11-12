@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>しつもんしてね — 検証テスト</title>
+  <style>
+    body {
+      font-family: "Yu Gothic UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      margin: 24px;
+      color: #252820;
+      background: #f4f2ec;
+    }
+    .card {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 20px;
+      border: 1px solid #e6e3db;
+      border-radius: 16px;
+      background: #fffefa;
+    }
+    h1 { margin-top: 0; font-size: 24px; }
+    .pass { color: #2f6b47; font-weight: 700; }
+    .fail { color: #a54232; font-weight: 700; }
+    li { margin: 8px 0; line-height: 1.6; }
+    button {
+      padding: 8px 16px;
+      border: 1px solid #dfe6d9;
+      border-radius: 999px;
+      background: #436f55;
+      color: #fffefa;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>「しつもんしてね」自動検証テスト</h1>
+    <p><button id="rerun" type="button">再実行</button></p>
+    <p id="summary">実行中…</p>
+    <ul id="results"></ul>
+  </main>
+  <script>
+    async function runTests() {
+      const resultsEl = document.getElementById("results");
+      const summaryEl = document.getElementById("summary");
+      resultsEl.textContent = "";
+      const logs = [];
+      let passed = 0;
+      let failed = 0;
+
+      function record(name, ok, detail) {
+        if (ok) passed += 1; else failed += 1;
+        const li = document.createElement("li");
+        const badge = document.createElement("span");
+        badge.className = ok ? "pass" : "fail";
+        badge.textContent = ok ? "[PASS] " : "[FAIL] ";
+        li.appendChild(badge);
+        li.appendChild(document.createTextNode(name + (detail ? " — " + detail : "")));
+        resultsEl.appendChild(li);
+      }
+
+      try {
+        const res = await fetch("../index.html");
+        const html = await res.text();
+        record("index.html 読み込み", html.length > 50000, html.length + " chars");
+
+        const qMatch = html.match(/const QUESTIONS = \[([\s\S]*?)\];/);
+        const tMatch = html.match(/const TEEN_QUESTIONS = \[([\s\S]*?)\];/);
+        const extract = (block) => (block.match(/^\s*"([^"]+)",/gm) || []).map((s) => s.trim().slice(1, -2));
+
+        const qList = qMatch ? extract(qMatch[1]) : [];
+        const tList = tMatch ? extract(tMatch[1]) : [];
+
+        record("こども向け質問プール件数 (400問)", qList.length === 400, "count=" + qList.length);
+        record("中学生向け質問プール件数 (400問)", tList.length === 400, "count=" + tList.length);
+        record("こども向けプール内重複なし", new Set(qList).size === 400, "unique=" + new Set(qList).size);
+        record("中学生向けプール内重複なし", new Set(tList).size === 400, "unique=" + new Set(tList).size);
+
+        const cross = qList.filter((q) => tList.includes(q));
+        record("両プール間の重複なし", cross.length === 0, "cross=" + cross.length);
+
+        const kanjiInKid = qList.filter((q) => /[\u4e00-\u9fff]/.test(q));
+        record("こども向けプールに漢字混入なし", kanjiInKid.length === 0, "kanji=" + kanjiInKid.length);
+
+        record("管理者パネル・APIキー入力欄の存在", html.includes('id="cfg-api-key"') && html.includes('id="admin-panel"'));
+        record("プロンプトインジェクション検査正規表現の存在", html.includes("LOCAL_INJECTION_RE"));
+      } catch (err) {
+        record("index.html 検証実行", false, String(err));
+      }
+
+      summaryEl.textContent = "合計: " + (passed + failed) + " 件 / 成功: " + passed + " 件 / 失敗: " + failed + " 件";
+      summaryEl.className = failed === 0 ? "pass" : "fail";
+    }
+
+    document.getElementById("rerun").addEventListener("click", runTests);
+    runTests();
+  </script>
+</body>
+</html>
