@@ -257,24 +257,21 @@ LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
 
 ## 5. 回答パイプライン
 
-1. **分類＋検索語生成**（`classify_and_rewrite`、1 コール）
-   `category` と `query` を同時に作る。`sexual` / `selfharm` / `crime_howto` / `politics_opinion`
-   はここで確定し、以降の外部呼び出しをせず定型文を返す。
-2. **検索付き回答**（`ask_with_search`）
-   `web_search` プラグイン＋`SITE_BIAS`（公的機関を優先する `site:` 指定）。
-   回答モデルは `ASK_ANSWER_MODEL`（既定・運用とも `z-ai/glm-5.3-flash`、`reasoning: {effort: low}`）、
-   失敗時は `ASK_ANSWER_FALLBACK`（既定 `qwen/qwen3.5-flash-02-23`）。
-   公的機関の出典が `MIN_PUBLIC_SOURCES`（2）未満なら、指定なしで 1 回だけ再検索する。
-3. **文数・字数の整形**（`sentences`）
-   `MODE_LIMITS` に合わせて文単位で切る。
-4. **検証**（`verify`、`ASK_VERIFY_MODEL` 既定 `mistralai/ministral-8b-2512`、運用値は `openai/gpt-6-luna`）
-   回答と検索スニペットを突き合わせ、`supported` / `partly` / `unsupported` と
-   `fixed_answer`、`wrong_readings` を返す。`json_mode` と正規表現フォールバックの二段構え。
-   `wrong_readings` はその場で読みだけ外す（害のない片方向修正）。
+1. **分類＋Web検索要否判定＋検索語生成**（`classify_and_rewrite_ex`、1 コール）
+   `category`、`needs_search`（時事・統計等の検索要否）、`query` を同時に作る。
+   `sexual` / `selfharm` / `crime_howto` / `politics_opinion` はここで確定し、以降の外部呼び出しをせず定型文を返す。
+2. **常識回答＋知識ベリファイ（`needs_search == false` の場合、省トークン経路）**
+   - `ask_with_knowledge`: Web 検索プラグインを使わず、確かな常識・教科書の知識だけで回答を生成する（モデル自身が検索必要と判断した場合は `NEED_SEARCH` を出力して 3. へ自動フォールバック）。
+   - `verify_knowledge`: 検証モデル（`verify_model`）の知識で事実関係と読みがな（`wrong_readings`）を照合する。`unsupported`（知識だけでは裏づけ不可）と判定された場合は 3. の Web 検索経路へ自動フォールバックする。
+3. **検索付き回答＋資料ベリファイ（`needs_search == true` またはフォールバック時）**
+   - `ask_with_search`: `web` プラグイン＋`SITE_BIAS`（公的機関を優先する `site:` 指定）。公的機関の出典が `MIN_PUBLIC_SOURCES`（2）未満なら、指定なしで 1 回だけ再検索する。
+   - `verify`: 回答と検索スニペットを突き合わせ、`supported` / `partly` / `unsupported` と `fixed_answer`、`wrong_readings` を返す。
+4. **文数・字数の整形と読みがな修正**（`sentences`、`wrong_readings` 除去）
+   設定された文数・文字数上限に合わせて文単位で切り、`wrong_readings` はその場で読みだけ外す。
 5. **最終安全チェック**（`safety_check`、政治・犯罪系のみ）
    `unsafe` なら `blocked` にして定型文へ。
 6. **記録**（`_finish` → `log_qa`）
-   成功・失敗を問わず 1 リクエスト 1 行を残す。
+   成功・失敗を問わず、`answer_type`（`knowledge` / `search`）を含めて 1 リクエスト 1 行を残す。
 
 タイムアウト: 回答 45 秒、検証 25 秒。
 
