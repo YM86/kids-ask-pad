@@ -265,9 +265,12 @@ LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
    - `verify_knowledge`: 検証モデル（`verify_model`）の知識で事実関係と読みがな（`wrong_readings`）を照合する。`unsupported`（知識だけでは裏づけ不可）と判定された場合は 3. の Web 検索経路へ自動フォールバックする。
 3. **検索付き回答＋資料ベリファイ（`needs_search == true` またはフォールバック時）**
    - `ask_with_search`: `web` プラグイン＋`SITE_BIAS`（公的機関を優先する `site:` 指定）。公的機関の出典が `MIN_PUBLIC_SOURCES`（2）未満なら、指定なしで 1 回だけ再検索する。
-   - `verify`: 回答と検索スニペットを突き合わせ、`supported` / `partly` / `unsupported` と `fixed_answer`、`wrong_readings` を返す。
-4. **文数・字数の整形と読みがな修正**（`sentences`、`wrong_readings` 除去）
-   設定された文数・文字数上限に合わせて文単位で切り、`wrong_readings` はその場で読みだけ外す。
+   - `verify`: 回答と検索スニペットを突き合わせ、`supported` / `partly` / `unsupported` と `fixed_answer`、`wrong_readings`、`missing_readings`（ふりがな漏れ漢字）を返す。
+4. **ふりがな保証と文数・字数の整形**（`sentences`、`find_unannotated_kanji`、`fill_missing_ruby`）
+   - 回答モデルのプロンプトで「すべての漢字に『漢字(よみ)』の形式で読みがなを付けること（ふりがなのない漢字の放置を厳禁）」を最優先ルールとして強制。
+   - ベリファイモデルが `missing_readings` を検出した場合は `fixed_answer` でふりがな付き修正文を提供し、採用する。
+   - 難問や時事ニュースで生成モデル・ベリファイモデルがふりがなを落とした場合でも、`find_unannotated_kanji` で未注記漢字を検出し、`fill_missing_ruby` が文章内容を変えずにルビだけを自動補完する。
+   - `wrong_readings`（誤った読み）は正規表現でその場で読みだけ外す。
 5. **最終安全チェック**（`safety_check`、政治・犯罪系のみ）
    `unsafe` なら `blocked` にして定型文へ。
 6. **記録**（`_finish` → `log_qa`）
