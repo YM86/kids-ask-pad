@@ -78,33 +78,44 @@
 - `この しつもん`: 直前の 1 問で使ったトークン。
 - 取得できない項目は `—`。
 
-### 2.5 読み上げ（Web Speech API）
+### 2.5 読み上げ・音声入力（Web Speech API）
 
-外部サービスを使わない。`speechSynthesis` のみ。
+外部サービスを使わない。ブラウザー標準の Web Speech API のみで動作する。
 
-- 話者: `lang` が `ja` の音声から `VOICE_PREFERENCE`
-  （`kyoko` → `o-ren` → `nanami` → `haruka` → `ayumi` → `sayaka` → `mizuki` → `google 日本語`）の順で選ぶ。
-  見つからなければ `ja` の先頭。`voiceschanged` で選び直す。
-- 文分割: `SENTENCE_RE` で文に分け、`<span class="sent">` に入れる（ふりがなは各文の内側）。
-- 読み上げは 1 文ずつ `SpeechSynthesisUtterance` を作り、`onend` の後 `文間` ms 待って次へ。
-- 読み上げ中の文には `class="sent spoken"`（薄い緑の帯）。
-- `speakingGen` の世代番号で、新しい質問・「けす」・モード切替時に古い発話を確実に破棄する。
-- 読み上げ用文字列は `toSpeechText` で作る（`漢字(よみ)` → 漢字、かっこ書き除去、空白圧縮）。
-- 端末に日本語音声が無ければ無音。iOS Safari は自動再生制限があり、
-  初回は `よみあげ` ボタンでの再生になることがある。
+- **読み上げ（`speechSynthesis`）**:
+  - 話者: `lang` が `ja` の音声から `VOICE_PREFERENCE`
+    （`kyoko` → `o-ren` → `nanami` → `haruka` → `ayumi` → `sayaka` → `mizuki` → `google 日本語`）の順で選ぶ。
+    見つからなければ `ja` の先頭。`voiceschanged` で選び直す。
+  - 文分割: `SENTENCE_RE` で文に分け、`<span class="sent">` に入れる（ふりがなは各文の内側）。
+  - 読み上げは 1 文ずつ `SpeechSynthesisUtterance` を作り、`onend` の後 `文間` ms 待って次へ。
+  - 読み上げ中の文には `class="sent spoken"`（薄い緑の帯）。
+  - `speakingGen` の世代番号で、新しい質問・「けす」・モード切替時に古い発話を確実に破棄する。
+  - 読み上げ用文字列は `toSpeechText` で作る（`漢字(よみ)` → 漢字、かっこ書き除去、空白圧縮）。
+- **音声入力（`SpeechRecognition` / `webkitSpeechRecognition`）**:
+  - 文字入力が苦手な幼児・低学年向けに、画面の「こえで きく（マイクボタン）」から声で質問可能。
+  - `interimResults: true` により、発話中の言葉がリアルタイムにテキストエリアに反映される。
+  - 発話終了（`onend`）で自動的に録音停止・テキスト確定。非対応ブラウザーではボタンを自動非表示。
 
-### 2.6 状態と操作
+### 2.6 「つぎは これを きいてみる？」（関連質問・深掘りチップ）
+
+- 回答受信時、その内容を踏まえて子どもが次に興味を持ちそうな関連疑問（2〜3問）をチップとして自動表示。
+- チップをクリックすると質問欄にテキストが入り、そのまま自動送信されて次の回答をスムーズに調べられる。
+- 疑問文にはルビ（`<ruby>`）が付き、モード（こども向け/中学生向け）に応じた適切な深さの疑問が提示される。
+
+### 2.7 状態と操作
 
 | 操作 | 挙動 |
 | --- | --- |
 | 送信 | 入力 2 文字以上で `POST /ask/api/ask`。二重送信は無効化。 |
-| 成功 | 答えを差し替え、ふりがなを付け、出典と注意書きを表示し、自動で読み上げる |
+| 音声入力 | 「こえで きく」を押して話す。認識結果が質問欄に入り、終了時にフォーカス。 |
+| 関連質問 | チップをタップすると質問欄にセットされ、自動で次の回答を調べる。 |
+| 成功 | 答えを差し替え、ふりがなを付け、関連質問と出典を表示し、自動で読み上げる |
 | 失敗 | `error` にメッセージ。答えは消さない（直前の答えを保持） |
-| `けす` | 入力・答え・出典・読み上げを消し、チップを選び直す |
+| `けす` | 入力・答え・出典・関連質問・読み上げを消し、チップを選び直す |
 | `もういちど` | 同じ質問を再送する |
 | 文字数 | 120 文字まで（`maxlength="160"` の textarea を JS 側で 120 に制限し、`n / 120` を表示） |
 
-### 2.7 デザインの共通ルール（全 8 ページ共通）
+### 2.8 デザインの共通ルール（全 8 ページ共通）
 
 - `.back` 丸ボタン（44px、`← どうぐいちらん`）。
 - `h1`: `clamp(30px, 5.2vw, 44px)`、`font-weight: 740`、`letter-spacing: -.05em`。
@@ -198,6 +209,8 @@
   "answer": "…（ふりがな付きの本文）",
   "verdict": "supported | partly | unsupported | unverified | unchecked | declined | blocked",
   "sources": ["mext.go.jp", "…"],
+  "source_links": [{"host": "mext.go.jp", "url": "https://…", "title": "…"}],
+  "related_questions": ["関連する質問1（ふりがな付き）", "質問2"],
   "notice": null,
   "cost": 0.008894,
   "tokens": { "prompt": 3906, "completion": 267, "total": 4173, "today": 140985 },

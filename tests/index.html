@@ -86,6 +86,8 @@
         record("こども向けプールに漢字混入なし", kanjiInKid.length === 0, "kanji=" + kanjiInKid.length);
 
         record("管理者パネル・APIキー入力欄の存在", html.includes('id="cfg-api-key"') && html.includes('id="admin-panel"'));
+        record("音声入力マイクボタンの存在", html.includes('id="mic-btn"'));
+        record("関連質問チップ表示領域の存在", html.includes('id="related-block"') && html.includes('id="related-chips"'));
         record("プロンプトインジェクション検査正規表現の存在", html.includes("LOCAL_INJECTION_RE"));
       } catch (err) {
         record("index.html 検証実行", false, String(err));

@@ -167,7 +167,37 @@
     textarea:focus-visible { outline: 3px solid #85a98e; outline-offset: 2px; border-color: #afc0ac; }
     textarea::placeholder { color: #a9aa9f; }
 
-    .ask-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+    .ask-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+
+    .mic-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 13px 18px;
+      border: 1px solid #c9d8c4;
+      border-radius: 12px;
+      color: #31513d;
+      background: #eef5eb;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      transition: transform .14s ease, background .14s ease, border-color .14s ease;
+    }
+    .mic-btn:hover { background: #e3eedd; border-color: #b3c9ac; }
+    .mic-btn:active { transform: translateY(1px); }
+    .mic-btn:focus-visible { outline: 3px solid #85a98e; outline-offset: 3px; }
+    .mic-btn.listening {
+      background: #fde8e8;
+      border-color: #f2a6a6;
+      color: #b32626;
+      animation: mic-pulse 1.3s infinite ease-in-out;
+    }
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); }
+    }
+    .mic-icon { flex-shrink: 0; }
     .counter { margin-left: auto; color: var(--muted); font-size: 12px; }
     .counter.over { color: #a5583f; font-weight: 700; }
 
@@ -369,6 +399,48 @@
       font-size: 13px;
       line-height: 1.7;
     }
+
+    .related-block {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border: 1px dashed #d5e2cf;
+      border-radius: 14px;
+      background: #f8faf6;
+    }
+    .related-title {
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #436f55;
+      letter-spacing: .02em;
+    }
+    .related-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .related-chip {
+      padding: 7px 13px;
+      border: 1px solid #d2ded0;
+      border-radius: 999px;
+      color: #2e4b37;
+      background: #fffefa;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+      transition: background .14s ease, border-color .14s ease, transform .14s ease;
+    }
+    .related-chip:hover {
+      background: #eef5eb;
+      border-color: #9cb899;
+      color: #1f3726;
+      transform: translateY(-1px);
+    }
+    .related-chip:active { transform: translateY(0); }
+    .related-chip:focus-visible { outline: 3px solid #85a98e; outline-offset: 2px; }
+    .related-chip ruby { ruby-align: center; }
+    .related-chip rt { font-size: .5em; color: #6f7c6d; }
 
     .meta {
       display: flex;
@@ -630,6 +702,15 @@
         enterkeyhint="send" autocapitalize="off" spellcheck="false"></textarea>
       <div class="ask-row">
         <button class="send" id="send" type="submit">おしえて！</button>
+        <button class="mic-btn" id="mic-btn" type="button" aria-label="声で質問する" title="こえで しつもんする">
+          <svg class="mic-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+            <line x1="12" y1="19" x2="12" y2="23"></line>
+            <line x1="8" y1="23" x2="16" y2="23"></line>
+          </svg>
+          <span class="mic-text" id="mic-text">こえで きく</span>
+        </button>
         <button class="clear" id="clear" type="button" aria-label="しつもんと こたえを けす">けす</button>
         <span class="counter" id="counter">0 / 120</span>
       </div>
@@ -660,6 +741,10 @@
         </div>
         <p class="answer-text" id="answer-text"></p>
         <p class="notice" id="notice" hidden></p>
+        <div class="related-block" id="related-block" hidden>
+          <div class="related-title">つぎは これを きいてみる？</div>
+          <div class="related-chips" id="related-chips"></div>
+        </div>
         <div class="meta">
           <span class="sources" id="sources"></span>
           <button class="ghost" id="speak" type="button">よみあげ</button>
@@ -777,6 +862,10 @@
       const answerBox = document.getElementById("answer");
       const answerText = document.getElementById("answer-text");
       const notice = document.getElementById("notice");
+      const relatedBlock = document.getElementById("related-block");
+      const relatedChips = document.getElementById("related-chips");
+      const micBtn = document.getElementById("mic-btn");
+      const micText = document.getElementById("mic-text");
       const sources = document.getElementById("sources");
       const errorBox = document.getElementById("error");
       const speakBtn = document.getElementById("speak");
@@ -944,8 +1033,8 @@
       async function verifyDirectOpenRouter(apiKey, verifyModel, safeQ, answerText, snippets, currentMode) {
         const hasSnippets = Array.isArray(snippets) && snippets.length > 0;
         const sys = hasSnippets
-          ? "あなたは子ども向けの答えが資料(<material>)で裏づけられるか確かめ、漢字のふりがな漏れを検査する担当です。出力は JSON のみ: {\"verdict\":\"supported|partly|unsupported\",\"fixed_answer\":\"...\",\"wrong_readings\":[\"漢字(よみ)\"],\"missing_readings\":[\"漢字\"]}"
-          : "あなたは子ども向けの答えが科学的・歴史的・一般的な常識や教科書の事実として正しいか確かめ、漢字のふりがな漏れを検査する担当です。事実誤認やハルシネーションがないか判定してください。出力は JSON のみ: {\"verdict\":\"supported|partly|unsupported\",\"fixed_answer\":\"...\",\"wrong_readings\":[\"漢字(よみ)\"],\"missing_readings\":[\"漢字\"]}";
+          ? "あなたは子ども向けの答えが資料(<material>)で裏づけられるか確かめ、漢字のふりがな漏れを検査する担当です。また、子どもがさらに興味を持ちそうな「つぎの質問」を2〜3個提案してください。出力は JSON のみ: {\"verdict\":\"supported|partly|unsupported\",\"fixed_answer\":\"...\",\"wrong_readings\":[\"漢字(よみ)\"],\"missing_readings\":[\"漢字\"],\"related_questions\":[\"40字以内の短い質問1\",\"質問2\"]}"
+          : "あなたは子ども向けの答えが科学的・歴史的・一般的な常識や教科書の事実として正しいか確かめ、漢字のふりがな漏れを検査する担当です。事実誤認やハルシネーションがないか判定してください。また、子どもがさらに興味を持ちそうな「つぎの質問」を2〜3個提案してください。出力は JSON のみ: {\"verdict\":\"supported|partly|unsupported\",\"fixed_answer\":\"...\",\"wrong_readings\":[\"漢字(よみ)\"],\"missing_readings\":[\"漢字\"],\"related_questions\":[\"40字以内の短い質問1\",\"質問2\"]}";
         const userMsg = hasSnippets
           ? "<material>\n" + snippets.join("\n") + "\n</material>\n\n<answer>\n" + answerText + "\n</answer>"
           : "<question>\n" + safeQ + "\n</question>\n\n<answer>\n" + answerText + "\n</answer>";
@@ -976,10 +1065,12 @@
           const m = vRaw.match(/\{[\s\S]*\}/);
           if (!m) return { verdict: "unchecked", wrong_readings: [], fixed_answer: "", tokens: vTok, cost: vCost };
           const parsed = JSON.parse(m[0]);
+          const rel = Array.isArray(parsed.related_questions) ? parsed.related_questions : [];
           return {
             verdict: String(parsed.verdict || "supported").toLowerCase(),
             fixed_answer: String(parsed.fixed_answer || ""),
             wrong_readings: Array.isArray(parsed.wrong_readings) ? parsed.wrong_readings : [],
+            related_questions: rel.map(String).filter(Boolean).slice(0, 3),
             tokens: vTok,
             cost: vCost
           };
@@ -1068,6 +1159,7 @@
               }
               verdict = "supported";
               answerType = "knowledge";
+              var directRelated = vCheck.related_questions || [];
             }
           }
         }
@@ -1130,6 +1222,7 @@
               const base = String(pair || "").split("(")[0].split("（")[0];
               if (base) text = text.split(pair).join(base);
             }
+            var directRelated = vCheck.related_questions || [];
           }
         }
 
@@ -1150,6 +1243,7 @@
           answer_type: answerType,
           sources: links.map((l) => l.host),
           source_links: links,
+          related_questions: (typeof directRelated !== "undefined" && directRelated) ? directRelated : [],
           tokens: { total: totalTok, today: summary.tokens.total },
           estimate: summary
         };
@@ -2165,6 +2259,10 @@
         sources.textContent = "";
         notice.hidden = true;
         notice.textContent = "";
+        if (relatedBlock) {
+          relatedBlock.hidden = true;
+          relatedChips.textContent = "";
+        }
         answerBox.classList.remove("on");
         errorBox.classList.remove("on");
         updateCounter();
@@ -2322,10 +2420,38 @@
         errorBox.classList.add("on");
       }
 
+      function renderRelatedQuestions(list) {
+        if (!relatedChips || !relatedBlock) return;
+        relatedChips.textContent = "";
+        if (!Array.isArray(list) || list.length === 0) {
+          relatedBlock.hidden = true;
+          return;
+        }
+        list.forEach((q) => {
+          if (!q || !String(q).trim()) return;
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "related-chip";
+          appendRuby(btn, String(q).trim());
+          btn.addEventListener("click", () => {
+            if (busy) return;
+            const plain = toSpeechText(String(q)).trim();
+            if (plain) {
+              input.value = plain;
+              updateCounter();
+              form.requestSubmit();
+            }
+          });
+          relatedChips.appendChild(btn);
+        });
+        relatedBlock.hidden = relatedChips.childNodes.length === 0;
+      }
+
       function showAnswer(data) {
         setUsage(data.tokens, data.estimate);
         plainAnswer = data.answer || "";
         renderAnswer(plainAnswer);
+        renderRelatedQuestions(data.related_questions);
         errorBox.classList.remove("on");
         if (data.notice) {
           notice.textContent = data.notice;
@@ -2781,6 +2907,80 @@
       });
 
       logRefreshBtn.addEventListener("click", loadAdminState);
+
+      // 音声入力（Web Speech API）
+      (function setupSpeechRecognition() {
+        if (!micBtn) return;
+        const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRec) {
+          micBtn.style.display = "none";
+          return;
+        }
+        let rec = null;
+        let isListening = false;
+        try {
+          rec = new SpeechRec();
+          rec.lang = "ja-JP";
+          rec.interimResults = true;
+          rec.maxAlternatives = 1;
+        } catch (_) {
+          micBtn.style.display = "none";
+          return;
+        }
+
+        function stopRec() {
+          isListening = false;
+          micBtn.classList.remove("listening");
+          if (micText) micText.textContent = "こえで きく";
+        }
+
+        rec.onstart = () => {
+          isListening = true;
+          micBtn.classList.add("listening");
+          if (micText) micText.textContent = "きいているよ…";
+          stopSpeaking();
+        };
+
+        rec.onresult = (e) => {
+          let interim = "";
+          let final = "";
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const transcript = e.results[i][0].transcript;
+            if (e.results[i].isFinal) final += transcript;
+            else interim += transcript;
+          }
+          const text = (final || interim).trim();
+          if (text) {
+            input.value = text.slice(0, MAX);
+            updateCounter();
+          }
+        };
+
+        rec.onerror = (e) => {
+          stopRec();
+          if (e.error === "not-allowed") {
+            showError("マイクの つかいかたを ゆるしてね。ブラウザーの 設定で マイクを 許可してね。");
+          }
+        };
+
+        rec.onend = () => {
+          stopRec();
+          input.focus();
+        };
+
+        micBtn.addEventListener("click", () => {
+          if (busy) return;
+          if (isListening) {
+            rec.stop();
+          } else {
+            try {
+              rec.start();
+            } catch (_) {
+              stopRec();
+            }
+          }
+        });
+      })();
 
       renderDaily();
       renderCategories();
