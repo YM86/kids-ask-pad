@@ -928,14 +928,17 @@
 
       const DEFAULT_CATALOG_GOOGLE = {
         answer: [
-          { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash（標準・無料枠あり）" },
-          { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite（高速・軽量・無料枠あり）" },
-          { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash（安定・無料枠あり）" }
+          { id: "gemini-flash-lite-latest", label: "Gemini Flash-Lite（超高速・無料枠あり）" },
+          { id: "gemini-3-flash-preview", label: "Gemini 3 Flash（高精度・高速・無料枠あり）" },
+          { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite（無料枠あり）" },
+          { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+          { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }
         ],
         verify: [
-          { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite（高速検証）" },
-          { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash（標準検証）" },
-          { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash（安定検証）" }
+          { id: "gemini-flash-lite-latest", label: "Gemini Flash-Lite（超高速検証）" },
+          { id: "gemini-3-flash-preview", label: "Gemini 3 Flash（高精度検証）" },
+          { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite（高速検証）" },
+          { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }
         ]
       };
 
@@ -950,12 +953,12 @@
           provider: "google",
           google_api_key: "",
           openrouter_api_key: "",
-          google_answer_model: "gemini-2.5-flash",
-          google_verify_model: "gemini-2.5-flash-lite",
+          google_answer_model: "gemini-flash-lite-latest",
+          google_verify_model: "gemini-flash-lite-latest",
           openrouter_answer_model: "z-ai/glm-5.3-flash",
           openrouter_verify_model: "openai/gpt-6-luna",
-          answer_model: "gemini-2.5-flash",
-          verify_model: "gemini-2.5-flash-lite",
+          answer_model: "gemini-flash-lite-latest",
+          verify_model: "gemini-flash-lite-latest",
           kid_sentences: 4,
           kid_chars: 420,
           teen_sentences: 6,
@@ -3060,8 +3063,8 @@
             provider: prov,
             answer_model: localCfg.answer_model,
             verify_model: localCfg.verify_model,
-            google_answer_model: localCfg.google_answer_model || "gemini-2.5-flash",
-            google_verify_model: localCfg.google_verify_model || "gemini-2.5-flash-lite",
+            google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
+            google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
             openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
             openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
             kid_sentences: localCfg.kid_sentences,
@@ -3175,8 +3178,8 @@
             provider: prov,
             answer_model: localCfg.answer_model,
             verify_model: localCfg.verify_model,
-            google_answer_model: localCfg.google_answer_model || "gemini-2.5-flash",
-            google_verify_model: localCfg.google_verify_model || "gemini-2.5-flash-lite",
+            google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
+            google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
             openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
             openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
             kid_sentences: localCfg.kid_sentences,

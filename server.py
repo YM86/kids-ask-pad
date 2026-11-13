@@ -75,14 +75,17 @@ MODEL_CATALOG_OPENROUTER = {
 
 MODEL_CATALOG_GOOGLE = {
     "answer": [
-        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash（標準・無料枠あり）"},
-        {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash-Lite（高速・軽量・無料枠あり）"},
-        {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash（安定・無料枠あり）"},
+        {"id": "gemini-flash-lite-latest", "label": "Gemini Flash-Lite（超高速・無料枠あり）"},
+        {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash（高精度・高速・無料枠あり）"},
+        {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite（無料枠あり）"},
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash"},
+        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
     ],
     "verify": [
-        {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash-Lite（高速検証）"},
-        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash（標準検証）"},
-        {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash（安定検証）"},
+        {"id": "gemini-flash-lite-latest", "label": "Gemini Flash-Lite（超高速検証）"},
+        {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash（高精度検証）"},
+        {"id": "gemini-3.1-flash-lite", "label": "Gemini 3.1 Flash-Lite（高速検証）"},
+        {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash"},
     ],
 }
 
@@ -326,14 +329,14 @@ def default_runtime_config():
         "provider": provider,
         "google_api_key": "",
         "openrouter_api_key": "",
-        "google_answer_model": "gemini-2.5-flash",
-        "google_verify_model": "gemini-2.5-flash-lite",
+        "google_answer_model": "gemini-flash-lite-latest",
+        "google_verify_model": "gemini-flash-lite-latest",
         "openrouter_answer_model": ANSWER_MODEL,
         "openrouter_verify_model": VERIFY_MODEL,
-        "answer_model": "gemini-2.5-flash" if provider == "google" else ANSWER_MODEL,
-        "answer_fallback": "gemini-2.0-flash" if provider == "google" else ANSWER_FALLBACK,
-        "query_model": QUERY_MODEL,
-        "verify_model": "gemini-2.5-flash-lite" if provider == "google" else VERIFY_MODEL,
+        "answer_model": "gemini-flash-lite-latest" if provider == "google" else ANSWER_MODEL,
+        "answer_fallback": "gemini-3-flash-preview" if provider == "google" else ANSWER_FALLBACK,
+        "query_model": "gemini-flash-lite-latest" if provider == "google" else QUERY_MODEL,
+        "verify_model": "gemini-flash-lite-latest" if provider == "google" else VERIFY_MODEL,
         "kid_sentences": DEFAULT_MODE_LIMITS["kid"]["sentences"],
         "kid_chars": DEFAULT_MODE_LIMITS["kid"]["chars"],
         "teen_sentences": DEFAULT_MODE_LIMITS["teen"]["sentences"],
@@ -378,18 +381,25 @@ def read_config():
             cfg["openrouter_api_key"] = str(saved.get("openrouter_api_key") or "").strip()
 
             if "google_answer_model" in saved:
-                cfg["google_answer_model"] = _clean_model_id(saved["google_answer_model"], "gemini-2.5-flash")
+                cfg["google_answer_model"] = _clean_model_id(saved["google_answer_model"], "gemini-flash-lite-latest")
             if "google_verify_model" in saved:
-                cfg["google_verify_model"] = _clean_model_id(saved["google_verify_model"], "gemini-2.5-flash-lite")
+                cfg["google_verify_model"] = _clean_model_id(saved["google_verify_model"], "gemini-flash-lite-latest")
             if "openrouter_answer_model" in saved:
                 cfg["openrouter_answer_model"] = _clean_model_id(saved["openrouter_answer_model"], ANSWER_MODEL)
             if "openrouter_verify_model" in saved:
                 cfg["openrouter_verify_model"] = _clean_model_id(saved["openrouter_verify_model"], VERIFY_MODEL)
 
+            # Auto-migrate deprecated Gemini models that 404 for new users
+            deprecated_gemini = {"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"}
+            if cfg.get("google_answer_model") in deprecated_gemini:
+                cfg["google_answer_model"] = "gemini-flash-lite-latest"
+            if cfg.get("google_verify_model") in deprecated_gemini:
+                cfg["google_verify_model"] = "gemini-flash-lite-latest"
+
             if cfg["provider"] == "google":
-                cfg["answer_model"] = cfg.get("google_answer_model") or "gemini-2.5-flash"
-                cfg["answer_fallback"] = "gemini-2.0-flash"
-                cfg["verify_model"] = cfg.get("google_verify_model") or "gemini-2.5-flash-lite"
+                cfg["answer_model"] = cfg.get("google_answer_model") or "gemini-flash-lite-latest"
+                cfg["answer_fallback"] = "gemini-3-flash-preview"
+                cfg["verify_model"] = cfg.get("google_verify_model") or "gemini-flash-lite-latest"
             else:
                 cfg["answer_model"] = cfg.get("openrouter_answer_model") or ANSWER_MODEL
                 cfg["answer_fallback"] = ANSWER_FALLBACK
@@ -397,8 +407,12 @@ def read_config():
 
             if "answer_model" in saved and saved["answer_model"]:
                 cfg["answer_model"] = _clean_model_id(saved["answer_model"], cfg["answer_model"])
+                if cfg["provider"] == "google" and cfg["answer_model"] in deprecated_gemini:
+                    cfg["answer_model"] = "gemini-flash-lite-latest"
             if "verify_model" in saved and saved["verify_model"]:
                 cfg["verify_model"] = _clean_model_id(saved["verify_model"], cfg["verify_model"])
+                if cfg["provider"] == "google" and cfg["verify_model"] in deprecated_gemini:
+                    cfg["verify_model"] = "gemini-flash-lite-latest"
 
             cfg["kid_sentences"] = _clamp_int(saved.get("kid_sentences"), cfg["kid_sentences"], 2, 8)
             cfg["kid_chars"] = _clamp_int(saved.get("kid_chars"), cfg["kid_chars"], 150, 800)
@@ -590,10 +604,10 @@ def public_config_view(cfg=None):
     active_catalog = MODEL_CATALOG_GOOGLE if provider == "google" else MODEL_CATALOG_OPENROUTER
     return {
         "provider": provider,
-        "answer_model": cfg.get("answer_model") or ("gemini-2.5-flash" if provider == "google" else ANSWER_MODEL),
-        "answer_fallback": cfg.get("answer_fallback") or ("gemini-2.0-flash" if provider == "google" else ANSWER_FALLBACK),
+        "answer_model": cfg.get("answer_model") or ("gemini-flash-lite-latest" if provider == "google" else ANSWER_MODEL),
+        "answer_fallback": cfg.get("answer_fallback") or ("gemini-3-flash-preview" if provider == "google" else ANSWER_FALLBACK),
         "query_model": cfg.get("query_model") or QUERY_MODEL,
-        "verify_model": cfg.get("verify_model") or ("gemini-2.5-flash-lite" if provider == "google" else VERIFY_MODEL),
+        "verify_model": cfg.get("verify_model") or ("gemini-flash-lite-latest" if provider == "google" else VERIFY_MODEL),
         "kid_sentences": cfg["kid_sentences"],
         "kid_chars": cfg["kid_chars"],
         "teen_sentences": cfg["teen_sentences"],
@@ -939,27 +953,43 @@ def gemini_call(model, messages, max_tokens, temperature, plugins=None, timeout=
     payload = json.dumps(body).encode("utf-8")
     path = "/v1beta/models/%s:generateContent" % urllib.parse.quote(clean_model, safe="")
 
-    conn = http.client.HTTPSConnection("generativelanguage.googleapis.com", timeout=timeout)
-    try:
-        conn.request(
-            "POST",
-            path,
-            body=payload,
-            headers={
-                "x-goog-api-key": active_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-        )
-        resp = conn.getresponse()
-        raw = resp.read()
-        if resp.status != 200:
-            detail = raw[:200].decode("utf-8", "replace")
-            raise RuntimeError("gemini-upstream-%d %s" % (resp.status, detail))
-        data = json.loads(raw)
-        return parse_gemini_response(data, clean_model)
-    finally:
-        conn.close()
+    for attempt in range(3):
+        conn = http.client.HTTPSConnection("generativelanguage.googleapis.com", timeout=timeout)
+        try:
+            conn.request(
+                "POST",
+                path,
+                body=payload,
+                headers={
+                    "x-goog-api-key": active_key,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+            )
+            resp = conn.getresponse()
+            raw = resp.read()
+            if resp.status == 429 and "tools" in body:
+                # Search grounding requires paid tier or has exhausted quota; fall back immediately without tools
+                del body["tools"]
+                payload = json.dumps(body).encode("utf-8")
+                conn.close()
+                continue
+            if resp.status in (429, 503) and attempt < 2:
+                conn.close()
+                time.sleep(1.2 * (attempt + 1))
+                continue
+            if resp.status != 200:
+                detail = raw[:200].decode("utf-8", "replace")
+                raise RuntimeError("gemini-upstream-%d %s" % (resp.status, detail))
+            data = json.loads(raw)
+            return parse_gemini_response(data, clean_model)
+        except (socket.timeout, TimeoutError):
+            if attempt < 2:
+                time.sleep(1.0)
+                continue
+            raise
+        finally:
+            conn.close()
 
 
 def openrouter(model, messages, max_tokens, temperature, plugins=None, timeout=45, json_mode=False,
@@ -1062,8 +1092,8 @@ def classify_and_rewrite_ex(question, cfg=None):
     force_search = bool(NEEDS_SEARCH_RE.search(question))
     safe_q = question.replace("<", "＜").replace(">", "＞")
     try:
-        data = openrouter(
-            cfg["query_model"],
+        data = ai_chat(
+            cfg["verify_model"] if cfg.get("provider") == "google" else (cfg.get("query_model") or cfg["verify_model"]),
             [
                 {"role": "system", "content": CLASSIFY_PROMPT},
                 {"role": "user", "content": "<question>%s</question>" % safe_q},
@@ -1073,6 +1103,7 @@ def classify_and_rewrite_ex(question, cfg=None):
             timeout=15,
             json_mode=True,
             reasoning={"effort": "low"},
+            cfg=cfg,
         )
         raw = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         cost = float((data.get("usage") or {}).get("cost") or 0.0)
@@ -1116,7 +1147,7 @@ def safety_check(answer, category, cfg=None):
     if not needs_check:
         return {"unsafe": False, "cost": 0.0, "tokens": 0}
     try:
-        data = openrouter(
+        data = ai_chat(
             cfg["verify_model"],
             [
                 {"role": "system", "content": SAFETY_PROMPT},
@@ -1127,6 +1158,7 @@ def safety_check(answer, category, cfg=None):
             timeout=20,
             json_mode=True,
             reasoning={"enabled": False},
+            cfg=cfg,
         )
         raw = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         cost = float((data.get("usage") or {}).get("cost") or 0.0)
@@ -1519,13 +1551,13 @@ def fill_missing_ruby(text, mode="kid", cfg=None):
         return text
     if cfg is None:
         cfg = read_config()
-    model = cfg.get("verify_model") or cfg.get("answer_fallback") or "openai/gpt-6-luna"
+    model = cfg.get("verify_model") or cfg.get("answer_fallback") or ("gemini-flash-lite-latest" if cfg.get("provider") == "google" else "openai/gpt-6-luna")
     messages = [
         {"role": "system", "content": RUBY_FILL_PROMPT},
         {"role": "user", "content": text},
     ]
     try:
-        data = openrouter(model, messages, 800, 0.0, None, timeout=14, reasoning={"enabled": False})
+        data = ai_chat(model, messages, 800, 0.0, None, timeout=14, reasoning={"enabled": False}, cfg=cfg)
         msg = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         cleaned = clean_text(msg)
         if cleaned and len(find_unannotated_kanji(cleaned)) < len(unannotated):
