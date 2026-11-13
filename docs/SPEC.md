@@ -245,7 +245,7 @@
 
 - `GET /ask/api/admin/state`: 設定値・モデル候補（`catalog`）・使用量・直近の検索ログ（日時・質問・回答・消費トークン）を返す。パスワード設定時は `X-Admin-Token` ヘッダーが無ければ `{"locked": true, "has_password": true}` のみ返す。
 - `POST /ask/api/admin/auth`: パスワードを照合し、メモリ内セッショントークン（有効 12 時間）と状態一式を返す。
-- `POST /ask/api/admin/config`: 回答モデル（`answer_model`）、検証モデル（`verify_model`）、こども・中学生それぞれの最大文数（`kid_sentences` / `teen_sentences`）と最大文字数（`kid_chars` / `teen_chars`）を `/var/lib/draw-pad-ai/config.json` に保存し即時反映する。
+- `POST /ask/api/admin/config`: プロバイダー（`provider`: `google` または `openrouter`）、APIキー（`google_api_key` または `openrouter_api_key`）、回答モデル（`answer_model`）、検証モデル（`verify_model`）、こども・中学生それぞれの最大文数（`kid_sentences` / `teen_sentences`）と最大文字数（`kid_chars` / `teen_chars`）を `config.json` に保存し即時反映する。
 - `POST /ask/api/admin/password`: 管理者パスワード（4〜64 文字、空欄で解除）を PBKDF2-HMAC-SHA256（120,000 回反復＋16 バイト乱数ソルト）でハッシュ化して `config.json` に保存する。
 
 ### 4.4 `GET /ask/api/health`
@@ -310,23 +310,39 @@ LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
 
 ---
 
-## 7. モデル・上限・環境変数
+## 7. プロバイダー・モデル・上限・環境変数
 
-`/etc/draw-pad/ai/ai.env`（`root:draw-pad-ai` 640）
+### 7.1 対応プロバイダー
+
+1. **Google AI Studio（Gemini 無料枠あり）**:
+   - エンドポイント: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+   - 回答モデル候補: `gemini-2.5-flash`（標準・おすすめ）、`gemini-2.5-flash-lite`（高速・軽量）、`gemini-2.0-flash`（安定）
+   - 検証モデル候補: `gemini-2.5-flash-lite`（高速検証）、`gemini-2.5-flash`（標準検証）、`gemini-2.0-flash`
+   - Web 検索: `tools: [{"googleSearch": {}}]`（Google Search Grounding）による公的サイト引用
+   - 費用: **無料枠（1日 1,500 回まで費用 $0.00）**
+2. **OpenRouter（多様なオープンモデル・従量課金）**:
+   - エンドポイント: `https://openrouter.ai/api/v1/chat/completions`
+   - モデル候補: `z-ai/glm-5.3-flash`, `google/gemini-2.5-flash`, `openai/gpt-6-luna`, `qwen/qwen3.5-flash-02-23`, `mistralai/ministral-8b-2512` 等
+   - Web 検索: `plugins: [{"id": "web"}]`
+
+### 7.2 環境変数
+
+`/etc/draw-pad/ai/ai.env`（`root:draw-pad-ai` 640）またはローカル環境
 
 | 変数 | 既定 | 用途 |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | — | 必須 |
-| `ASK_ANSWER_MODEL` | `z-ai/glm-5.3-flash` | 回答（2026-11-12 の運用値も同じ） |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | — | Google AI Studio API キー |
+| `OPENROUTER_API_KEY` | — | OpenRouter API キー |
+| `ASK_ANSWER_MODEL` | `z-ai/glm-5.3-flash` | OpenRouter 回答標準モデル |
 | `ASK_ANSWER_FALLBACK` | `qwen/qwen3.5-flash-02-23` | 回答の代替 |
 | `ASK_QUERY_MODEL` | `z-ai/glm-5.3-flash` | 分類＋検索語 |
-| `ASK_VERIFY_MODEL` | `mistralai/ministral-8b-2512` | 検証（2026-11-12 の運用値は `openai/gpt-6-luna`） |
+| `ASK_VERIFY_MODEL` | `mistralai/ministral-8b-2512` | OpenRouter 検証標準モデル |
 | `ASK_WEB_RESULTS` | `5` | 検索件数 |
-| `ASK_DAILY_USD_MAX` | `1.00` | 1 日の費用上限 |
+| `ASK_DAILY_USD_MAX` | `1.00` | 1 日の費用上限（OpenRouter 利用時） |
 | `ASK_PER_QUESTION_EST` | `0.0085` | 実測が無い日の 1 問単価 |
 | `ASK_LOG_KEEP_DAYS` | `180` | 記録の保持日数 |
 | `ASK_LISTEN_HOST` / `ASK_LISTEN_PORT` | `127.0.0.1` / `8787` | 待ち受け |
-| `ASK_STATE_DIR` | `/var/lib/draw-pad-ai` | 状態と記録 |
+| `ASK_STATE_DIR` | `/var/lib/draw-pad-ai` または `./data` | 状態と記録 |
 
 ---
 

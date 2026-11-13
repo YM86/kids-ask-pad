@@ -21,17 +21,20 @@ import sys
 import threading
 import time
 import unicodedata
+import uuid
 import urllib.parse
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # ---------------------------------------------------------------- 設定
 
-API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_ENV_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
+GOOGLE_ENV_KEY = (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
+API_KEY = OPENROUTER_ENV_KEY
 LISTEN_HOST = os.environ.get("ASK_LISTEN_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("ASK_LISTEN_PORT", "8787"))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_DIR = os.environ.get("ASK_STATE_DIR", os.path.join(BASE_DIR, "data"))
+STATE_DIR = os.environ.get("ASK_STATE_DIR", "/var/lib/draw-pad-ai" if os.path.exists("/var/lib/draw-pad-ai") else os.path.join(BASE_DIR, "data"))
 LOG_KEEP_DAYS = int(os.environ.get("ASK_LOG_KEEP_DAYS", "180"))
 
 ANSWER_MODEL = os.environ.get("ASK_ANSWER_MODEL", "z-ai/glm-5.3-flash")
@@ -50,7 +53,7 @@ VERIFY_TIMEOUT = 25
 WEB_RESULTS = int(os.environ.get("ASK_WEB_RESULTS", "5"))
 
 # 管理者画面で選択できるモデルの候補
-MODEL_CATALOG = {
+MODEL_CATALOG_OPENROUTER = {
     "answer": [
         {"id": "z-ai/glm-5.3-flash", "label": "GLM 5.3 Flash（標準・高速）"},
         {"id": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
@@ -69,6 +72,21 @@ MODEL_CATALOG = {
         {"id": "qwen/qwen3.5-flash-02-23", "label": "Qwen 3.5 Flash"},
     ],
 }
+
+MODEL_CATALOG_GOOGLE = {
+    "answer": [
+        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash（標準・無料枠あり）"},
+        {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash-Lite（高速・軽量・無料枠あり）"},
+        {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash（安定・無料枠あり）"},
+    ],
+    "verify": [
+        {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash-Lite（高速検証）"},
+        {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash（標準検証）"},
+        {"id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash（安定検証）"},
+    ],
+}
+
+MODEL_CATALOG = MODEL_CATALOG_OPENROUTER
 
 # 公的機関・大学・研究機関を優先するための検索語と判定
 SITE_BIAS = (
@@ -301,17 +319,26 @@ def _today():
 
 
 def default_runtime_config():
+    has_google = bool(GOOGLE_ENV_KEY)
+    has_or = bool(OPENROUTER_ENV_KEY)
+    provider = "openrouter" if (has_or and not has_google) else "google"
     return {
-        "answer_model": ANSWER_MODEL,
-        "answer_fallback": ANSWER_FALLBACK,
+        "provider": provider,
+        "google_api_key": "",
+        "openrouter_api_key": "",
+        "google_answer_model": "gemini-2.5-flash",
+        "google_verify_model": "gemini-2.5-flash-lite",
+        "openrouter_answer_model": ANSWER_MODEL,
+        "openrouter_verify_model": VERIFY_MODEL,
+        "answer_model": "gemini-2.5-flash" if provider == "google" else ANSWER_MODEL,
+        "answer_fallback": "gemini-2.0-flash" if provider == "google" else ANSWER_FALLBACK,
         "query_model": QUERY_MODEL,
-        "verify_model": VERIFY_MODEL,
+        "verify_model": "gemini-2.5-flash-lite" if provider == "google" else VERIFY_MODEL,
         "kid_sentences": DEFAULT_MODE_LIMITS["kid"]["sentences"],
         "kid_chars": DEFAULT_MODE_LIMITS["kid"]["chars"],
         "teen_sentences": DEFAULT_MODE_LIMITS["teen"]["sentences"],
         "teen_chars": DEFAULT_MODE_LIMITS["teen"]["chars"],
         "daily_usd_max": DAILY_USD_MAX,
-        "openrouter_api_key": "",
         "password_salt": "",
         "password_hash": "",
     }
@@ -333,7 +360,7 @@ def _clamp_float(val, default, low, high):
 
 def _clean_model_id(val, default):
     s = str(val or "").strip()
-    if re.fullmatch(r"[a-zA-Z0-9._-]+/[a-zA-Z0-9._:-]+", s) and len(s) <= 80:
+    if re.fullmatch(r"([a-zA-Z0-9._-]+/)?[a-zA-Z0-9._:-]+", s) and len(s) <= 80:
         return s
     return default
 
@@ -344,16 +371,40 @@ def read_config():
         with open(_config_path(), "r", encoding="utf-8") as f:
             saved = json.load(f)
         if isinstance(saved, dict):
-            cfg["answer_model"] = _clean_model_id(saved.get("answer_model"), cfg["answer_model"])
-            cfg["answer_fallback"] = _clean_model_id(saved.get("answer_fallback"), cfg["answer_fallback"])
-            cfg["query_model"] = _clean_model_id(saved.get("query_model"), cfg["query_model"])
-            cfg["verify_model"] = _clean_model_id(saved.get("verify_model"), cfg["verify_model"])
+            p = str(saved.get("provider") or "").strip().lower()
+            if p in ("google", "openrouter"):
+                cfg["provider"] = p
+            cfg["google_api_key"] = str(saved.get("google_api_key") or "").strip()
+            cfg["openrouter_api_key"] = str(saved.get("openrouter_api_key") or "").strip()
+
+            if "google_answer_model" in saved:
+                cfg["google_answer_model"] = _clean_model_id(saved["google_answer_model"], "gemini-2.5-flash")
+            if "google_verify_model" in saved:
+                cfg["google_verify_model"] = _clean_model_id(saved["google_verify_model"], "gemini-2.5-flash-lite")
+            if "openrouter_answer_model" in saved:
+                cfg["openrouter_answer_model"] = _clean_model_id(saved["openrouter_answer_model"], ANSWER_MODEL)
+            if "openrouter_verify_model" in saved:
+                cfg["openrouter_verify_model"] = _clean_model_id(saved["openrouter_verify_model"], VERIFY_MODEL)
+
+            if cfg["provider"] == "google":
+                cfg["answer_model"] = cfg.get("google_answer_model") or "gemini-2.5-flash"
+                cfg["answer_fallback"] = "gemini-2.0-flash"
+                cfg["verify_model"] = cfg.get("google_verify_model") or "gemini-2.5-flash-lite"
+            else:
+                cfg["answer_model"] = cfg.get("openrouter_answer_model") or ANSWER_MODEL
+                cfg["answer_fallback"] = ANSWER_FALLBACK
+                cfg["verify_model"] = cfg.get("openrouter_verify_model") or VERIFY_MODEL
+
+            if "answer_model" in saved and saved["answer_model"]:
+                cfg["answer_model"] = _clean_model_id(saved["answer_model"], cfg["answer_model"])
+            if "verify_model" in saved and saved["verify_model"]:
+                cfg["verify_model"] = _clean_model_id(saved["verify_model"], cfg["verify_model"])
+
             cfg["kid_sentences"] = _clamp_int(saved.get("kid_sentences"), cfg["kid_sentences"], 2, 8)
             cfg["kid_chars"] = _clamp_int(saved.get("kid_chars"), cfg["kid_chars"], 150, 800)
             cfg["teen_sentences"] = _clamp_int(saved.get("teen_sentences"), cfg["teen_sentences"], 3, 12)
             cfg["teen_chars"] = _clamp_int(saved.get("teen_chars"), cfg["teen_chars"], 250, 1200)
             cfg["daily_usd_max"] = _clamp_float(saved.get("daily_usd_max"), cfg["daily_usd_max"], 0.10, 10.00)
-            cfg["openrouter_api_key"] = str(saved.get("openrouter_api_key") or "").strip()
             cfg["password_salt"] = str(saved.get("password_salt") or "")
             cfg["password_hash"] = str(saved.get("password_hash") or "")
     except Exception:
@@ -365,13 +416,50 @@ def write_config(updates):
     os.makedirs(STATE_DIR, exist_ok=True)
     with _lock:
         cfg = read_config()
-        cfg.update(updates)
+        if "provider" in updates:
+            p = str(updates["provider"]).strip().lower()
+            if p in ("google", "openrouter"):
+                cfg["provider"] = p
+        if "google_api_key" in updates:
+            k = str(updates["google_api_key"] or "").strip()
+            if k:
+                cfg["google_api_key"] = k
+        if updates.get("clear_google_key"):
+            cfg["google_api_key"] = ""
+        if "openrouter_api_key" in updates:
+            k = str(updates["openrouter_api_key"] or "").strip()
+            if k:
+                cfg["openrouter_api_key"] = k
+        if updates.get("clear_openrouter_key"):
+            cfg["openrouter_api_key"] = ""
+        if updates.get("clear_api_key"):
+            if cfg["provider"] == "google":
+                cfg["google_api_key"] = ""
+            else:
+                cfg["openrouter_api_key"] = ""
+
+        if "answer_model" in updates:
+            m = _clean_model_id(updates["answer_model"], cfg["answer_model"])
+            if cfg["provider"] == "google":
+                cfg["google_answer_model"] = m
+            else:
+                cfg["openrouter_answer_model"] = m
+            cfg["answer_model"] = m
+        if "verify_model" in updates:
+            m = _clean_model_id(updates["verify_model"], cfg["verify_model"])
+            if cfg["provider"] == "google":
+                cfg["google_verify_model"] = m
+            else:
+                cfg["openrouter_verify_model"] = m
+            cfg["verify_model"] = m
+
+        for key in ("kid_sentences", "kid_chars", "teen_sentences", "teen_chars", "daily_usd_max",
+                    "password_salt", "password_hash"):
+            if key in updates:
+                cfg[key] = updates[key]
+
         # Re-validate
         base = default_runtime_config()
-        cfg["answer_model"] = _clean_model_id(cfg.get("answer_model"), base["answer_model"])
-        cfg["answer_fallback"] = _clean_model_id(cfg.get("answer_fallback"), base["answer_fallback"])
-        cfg["query_model"] = _clean_model_id(cfg.get("query_model"), base["query_model"])
-        cfg["verify_model"] = _clean_model_id(cfg.get("verify_model"), base["verify_model"])
         cfg["kid_sentences"] = _clamp_int(cfg.get("kid_sentences"), base["kid_sentences"], 2, 8)
         cfg["kid_chars"] = _clamp_int(cfg.get("kid_chars"), base["kid_chars"], 150, 800)
         cfg["teen_sentences"] = _clamp_int(cfg.get("teen_sentences"), base["teen_sentences"], 3, 12)
@@ -461,11 +549,26 @@ def admin_rate_ok(ip):
 
 
 
-def get_api_key(cfg=None):
+def get_google_api_key(cfg=None):
+    if cfg is None:
+        cfg = read_config()
+    k = str(cfg.get("google_api_key") or "").strip()
+    return k or GOOGLE_ENV_KEY
+
+
+def get_openrouter_api_key(cfg=None):
     if cfg is None:
         cfg = read_config()
     k = str(cfg.get("openrouter_api_key") or "").strip()
-    return k or API_KEY
+    return k or OPENROUTER_ENV_KEY
+
+
+def get_api_key(cfg=None):
+    if cfg is None:
+        cfg = read_config()
+    if cfg.get("provider") == "google":
+        return get_google_api_key(cfg)
+    return get_openrouter_api_key(cfg)
 
 
 def mask_api_key(key):
@@ -480,20 +583,34 @@ def mask_api_key(key):
 def public_config_view(cfg=None):
     if cfg is None:
         cfg = read_config()
+    provider = cfg.get("provider", "google")
+    g_key = get_google_api_key(cfg)
+    or_key = get_openrouter_api_key(cfg)
+    active_key = g_key if provider == "google" else or_key
+    active_catalog = MODEL_CATALOG_GOOGLE if provider == "google" else MODEL_CATALOG_OPENROUTER
     return {
-        "answer_model": cfg["answer_model"],
-        "answer_fallback": cfg["answer_fallback"],
-        "query_model": cfg["query_model"],
-        "verify_model": cfg["verify_model"],
+        "provider": provider,
+        "answer_model": cfg.get("answer_model") or ("gemini-2.5-flash" if provider == "google" else ANSWER_MODEL),
+        "answer_fallback": cfg.get("answer_fallback") or ("gemini-2.0-flash" if provider == "google" else ANSWER_FALLBACK),
+        "query_model": cfg.get("query_model") or QUERY_MODEL,
+        "verify_model": cfg.get("verify_model") or ("gemini-2.5-flash-lite" if provider == "google" else VERIFY_MODEL),
         "kid_sentences": cfg["kid_sentences"],
         "kid_chars": cfg["kid_chars"],
         "teen_sentences": cfg["teen_sentences"],
         "teen_chars": cfg["teen_chars"],
         "daily_usd_max": cfg["daily_usd_max"],
-        "has_api_key": bool(get_api_key(cfg)),
-        "api_key_masked": mask_api_key(get_api_key(cfg)),
+        "has_google_key": bool(g_key),
+        "google_key_masked": mask_api_key(g_key),
+        "has_openrouter_key": bool(or_key),
+        "openrouter_key_masked": mask_api_key(or_key),
+        "has_api_key": bool(active_key),
+        "api_key_masked": mask_api_key(active_key),
         "has_password": bool(cfg.get("password_hash")),
-        "catalog": MODEL_CATALOG,
+        "catalog": active_catalog,
+        "catalogs": {
+            "google": MODEL_CATALOG_GOOGLE,
+            "openrouter": MODEL_CATALOG_OPENROUTER,
+        },
     }
 
 
@@ -549,12 +666,22 @@ def usage_summary():
     cfg = read_config()
     daily_max = cfg["daily_usd_max"]
     tokens = read_tokens()
-    if not get_api_key(cfg):
-        return 503, {
-            "error": "missing-key",
-            "message": "まだ APIキーが 設定されていないよ。画面の いちばん 下の「おうちの ひとへ（管理・ログ）」から OpenRouter の APIキーを 設定してね。",
-        }
     spend = read_spend()
+    provider = cfg.get("provider", "google")
+
+    if provider == "google":
+        today_reqs = spend.get("count") or 0
+        remaining_reqs = max(0, 1500 - today_reqs)
+        return {
+            "tokens": tokens,
+            "spend": 0.0,
+            "daily_max": daily_max,
+            "per_question": 0.0,
+            "remaining": remaining_reqs,
+            "provider": "google",
+            "has_key": bool(get_api_key(cfg)),
+        }
+
     measured_cost = tokens.get("cost") or 0.0
     measured_count = tokens.get("measured") or 0
     if measured_count > 0 and measured_cost > 0:
@@ -569,6 +696,8 @@ def usage_summary():
         "daily_max": daily_max,
         "per_question": round(per_question, 6),
         "remaining": remaining,
+        "provider": "openrouter",
+        "has_key": bool(get_api_key(cfg)),
     }
 
 
@@ -705,9 +834,137 @@ def rate_ok(ip):
 
 # ---------------------------------------------------------------- AI 呼び出し
 
+def parse_gemini_response(res_dict, requested_model="gemini-2.5-flash"):
+    candidates = res_dict.get("candidates") or []
+    candidate = candidates[0] if candidates else {}
+    content = candidate.get("content") or {}
+    parts = content.get("parts") or []
+
+    text_parts = []
+    for part in parts:
+        if isinstance(part, dict) and "text" in part:
+            text_parts.append(part["text"])
+    text = "".join(text_parts)
+
+    grounding = candidate.get("groundingMetadata") or {}
+    annotations = []
+    seen_urls = set()
+    for chunk in (grounding.get("groundingChunks") or []):
+        web = chunk.get("web") or {}
+        uri = (web.get("uri") or "").strip()
+        title = (web.get("title") or "").strip()
+        if uri and uri not in seen_urls:
+            seen_urls.add(uri)
+            annotations.append({
+                "type": "url_citation",
+                "url_citation": {
+                    "url": uri,
+                    "title": title or uri,
+                    "content": title or uri,
+                }
+            })
+
+    usage = res_dict.get("usageMetadata") or {}
+    prompt_tokens = int(usage.get("promptTokenCount") or 0)
+    completion_tokens = int(usage.get("candidatesTokenCount") or 0)
+    total_tokens = int(usage.get("totalTokenCount") or (prompt_tokens + completion_tokens))
+
+    return {
+        "id": "gemini-" + uuid.uuid4().hex[:12],
+        "model": res_dict.get("modelVersion") or requested_model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                    "annotations": annotations,
+                },
+                "finish_reason": str(candidate.get("finishReason") or "STOP").lower()
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost": 0.0
+        }
+    }
+
+
+def gemini_call(model, messages, max_tokens, temperature, plugins=None, timeout=45, json_mode=False,
+                reasoning=None, cfg=None):
+    active_key = get_google_api_key(cfg)
+    if not active_key:
+        raise RuntimeError("missing-api-key")
+
+    clean_model = model
+    if clean_model.startswith("google/"):
+        clean_model = clean_model[len("google/"):]
+    if not clean_model:
+        clean_model = "gemini-2.5-flash"
+
+    system_parts = []
+    contents = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content") or ""
+        if role == "system":
+            if content:
+                system_parts.append({"text": content})
+        else:
+            gemini_role = "model" if role in ("assistant", "model") else "user"
+            contents.append({
+                "role": gemini_role,
+                "parts": [{"text": content}]
+            })
+
+    if not contents:
+        contents.append({"role": "user", "parts": [{"text": ""}]})
+
+    body = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": max(0.0, min(2.0, float(temperature))),
+            "maxOutputTokens": int(max_tokens),
+        }
+    }
+    if system_parts:
+        body["systemInstruction"] = {"parts": system_parts}
+    if json_mode:
+        body["generationConfig"]["responseMimeType"] = "application/json"
+    if plugins and any((p.get("id") if isinstance(p, dict) else str(p)) == "web" for p in plugins):
+        body["tools"] = [{"googleSearch": {}}]
+
+    payload = json.dumps(body).encode("utf-8")
+    path = "/v1beta/models/%s:generateContent" % urllib.parse.quote(clean_model, safe="")
+
+    conn = http.client.HTTPSConnection("generativelanguage.googleapis.com", timeout=timeout)
+    try:
+        conn.request(
+            "POST",
+            path,
+            body=payload,
+            headers={
+                "x-goog-api-key": active_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+        if resp.status != 200:
+            detail = raw[:200].decode("utf-8", "replace")
+            raise RuntimeError("gemini-upstream-%d %s" % (resp.status, detail))
+        data = json.loads(raw)
+        return parse_gemini_response(data, clean_model)
+    finally:
+        conn.close()
+
+
 def openrouter(model, messages, max_tokens, temperature, plugins=None, timeout=45, json_mode=False,
-               reasoning=None):
-    active_key = get_api_key()
+               reasoning=None, cfg=None):
+    active_key = get_openrouter_api_key(cfg)
     if not active_key:
         raise RuntimeError("missing-api-key")
     body = {
@@ -741,15 +998,26 @@ def openrouter(model, messages, max_tokens, temperature, plugins=None, timeout=4
         raw = resp.read()
         if resp.status != 200:
             detail = raw[:180].decode("utf-8", "replace")
-            # reasoning 非対応の経路では、指定を外して 1 回だけやり直す
             if reasoning and resp.status == 400 and "reasoning" in detail.lower():
                 conn.close()
                 return openrouter(model, messages, max_tokens, temperature, plugins,
-                                  timeout, json_mode, None)
+                                  timeout, json_mode, None, cfg=cfg)
             raise RuntimeError("upstream-%d %s" % (resp.status, detail))
         return json.loads(raw)
     finally:
         conn.close()
+
+
+def ai_chat(model, messages, max_tokens, temperature, plugins=None, timeout=45, json_mode=False,
+            reasoning=None, cfg=None):
+    if cfg is None:
+        cfg = read_config()
+    provider = cfg.get("provider", "google")
+    if provider == "google":
+        return gemini_call(model, messages, max_tokens, temperature, plugins=plugins,
+                           timeout=timeout, json_mode=json_mode, reasoning=reasoning, cfg=cfg)
+    return openrouter(model, messages, max_tokens, temperature, plugins=plugins,
+                      timeout=timeout, json_mode=json_mode, reasoning=reasoning, cfg=cfg)
 
 
 DECLINE_MESSAGES = {
@@ -907,8 +1175,8 @@ def _answer_call(query_text, question, prompt, ask_line, limits, cfg):
     last = None
     for model in (cfg["answer_model"], cfg["answer_fallback"]):
         try:
-            data = openrouter(model, messages, limits["max_tokens"], 0.3, plugins,
-                              ANSWER_TIMEOUT, reasoning={"effort": "low"})
+            data = ai_chat(model, messages, limits["max_tokens"], 0.3, plugins,
+                           ANSWER_TIMEOUT, reasoning={"effort": "low"}, cfg=cfg)
         except Exception as exc:
             last = exc
             continue
@@ -969,8 +1237,8 @@ def ask_with_knowledge(question, mode="kid", category="ok", cfg=None):
     last = None
     for model in (cfg["answer_model"], cfg["answer_fallback"]):
         try:
-            data = openrouter(model, messages, limits["max_tokens"], 0.2, None,
-                              ANSWER_TIMEOUT, reasoning={"effort": "low"})
+            data = ai_chat(model, messages, limits["max_tokens"], 0.2, None,
+                           ANSWER_TIMEOUT, reasoning={"effort": "low"}, cfg=cfg)
         except Exception as exc:
             last = exc
             continue
@@ -1071,9 +1339,9 @@ def verify_knowledge(question, answer, mode="kid", cfg=None):
         {"role": "user", "content": "<question>\n%s\n</question>\n\n<answer>\n%s\n</answer>" % (safe_q, safe_answer)},
     ]
     try:
-        data = openrouter(cfg["verify_model"], messages, 900 if mode == "teen" else 600, 0.1,
-                          None, VERIFY_TIMEOUT,
-                          json_mode=True, reasoning={"enabled": False})
+        data = ai_chat(cfg["verify_model"], messages, 900 if mode == "teen" else 600, 0.1,
+                       None, VERIFY_TIMEOUT,
+                       json_mode=True, reasoning={"enabled": False}, cfg=cfg)
     except Exception as exc:
         print("verify-knowledge-failed:", exc, file=sys.stderr)
         return {"verdict": "unchecked", "problems": [], "fixed_answer": "", "cost": 0.0, "tokens": (0, 0)}
@@ -1102,9 +1370,9 @@ def verify(answer, snippets, mode="kid", cfg=None):
         {"role": "user", "content": "<material>\n%s\n</material>\n\n<answer>\n%s\n</answer>" % (material, safe_answer)},
     ]
     try:
-        data = openrouter(cfg["verify_model"], messages, 900 if mode == "teen" else 600, 0.1,
-                          None, VERIFY_TIMEOUT,
-                          json_mode=True, reasoning={"enabled": False})
+        data = ai_chat(cfg["verify_model"], messages, 900 if mode == "teen" else 600, 0.1,
+                       None, VERIFY_TIMEOUT,
+                       json_mode=True, reasoning={"enabled": False}, cfg=cfg)
     except Exception as exc:
         print("verify-failed:", exc, file=sys.stderr)
         return {"verdict": "unchecked", "problems": [], "fixed_answer": "", "cost": 0.0, "tokens": (0, 0)}
@@ -1316,12 +1584,13 @@ def handle_question(question, mode="kid"):
     cfg = read_config()
     limits = get_mode_limits(mode, cfg)
     if not get_api_key(cfg):
+        prov_name = "Google AI Studio" if cfg.get("provider") == "google" else "OpenRouter"
         return 503, {
             "error": "missing-key",
-            "message": "まだ APIキーが 設定されていないよ。画面の いちばん 下の「おうちの ひとへ（管理・ログ）」から OpenRouter の APIキーを 設定してね。",
+            "message": "まだ APIキーが 設定されていないよ。画面の いちばん 下の「おうちの ひとへ（管理・ログ）」から %s の APIキーを 設定してね。" % prov_name,
         }
     spend = read_spend()
-    if spend["spend"] >= cfg["daily_usd_max"]:
+    if cfg.get("provider") != "google" and spend["spend"] >= cfg["daily_usd_max"]:
         return 503, {
             "error": "budget",
             "message": "きょうは たくさん おしゃべりしたから、また あしたに してね。",
@@ -1671,16 +1940,24 @@ class Handler(BaseHTTPRequestHandler):
             if not self._admin_authorized(cfg, data):
                 return self._json(403, {"error": "unauthorized", "message": "パスワード認証が必要です。"})
             updates = {}
-            for key in ("answer_model", "answer_fallback", "query_model", "verify_model",
+            for key in ("provider", "answer_model", "answer_fallback", "query_model", "verify_model",
                         "kid_sentences", "kid_chars", "teen_sentences", "teen_chars", "daily_usd_max"):
                 if key in data:
                     updates[key] = data[key]
+            if "google_api_key" in data:
+                raw_key = str(data.get("google_api_key") or "").strip()
+                if raw_key:
+                    updates["google_api_key"] = raw_key
+            if data.get("clear_google_key"):
+                updates["clear_google_key"] = True
             if "openrouter_api_key" in data:
                 raw_key = str(data.get("openrouter_api_key") or "").strip()
                 if raw_key:
                     updates["openrouter_api_key"] = raw_key
+            if data.get("clear_openrouter_key"):
+                updates["clear_openrouter_key"] = True
             if data.get("clear_api_key"):
-                updates["openrouter_api_key"] = ""
+                updates["clear_api_key"] = True
             new_cfg = write_config(updates)
             return self._json(200, {
                 "ok": True,
