@@ -2545,10 +2545,56 @@
         send.disabled = busy || len < 2 || len > MAX;
       }
 
-      // 「漢字(よみ)」の形だけを ruby にする（「よみ(漢字)」はサーバー側で漢字だけに直す）
+      // 「漢字(よみ)」の形だけを ruby にする
       const KANJI = "[\\u4e00-\\u9fff々〆ヶ]+";
       const KANA = "[ぁ-んァ-ヶー]{1,16}";
       const RUBY_RE = new RegExp("(" + KANJI + ")[（(](" + KANA + ")[）)]", "g");
+
+      const SAME_HIRA_RE = /([ぁ-ん]+)[（(]\1[）)]/g;
+      const KANJI_INSIDE_RE = /([\u4e00-\u9fff々〆ヶ])[（(]\1[）)]/g;
+      const REVERSE_RUBY_RE = /([ぁ-んァ-ヶー]+)[（(]([\u4e00-\u9fff々〆ヶ]+)[）)]/g;
+      const DUP_OKURI_RE = /([\u4e00-\u9fff々〆ヶ]+)([ぁ-ん]+)[（(]([ぁ-ん]+)[）)]\2/g;
+      const OKURIGANA_RE = /([\u4e00-\u9fff々〆ヶ]+)([ぁ-ん]+)[（(]([ぁ-ん]+)[）)]/g;
+      const COMPOUND_HIRA_RE = /([\u4e00-\u9fff々〆ヶ]+)([ぁ-ん]+)([\u4e00-\u9fff々〆ヶ]+)[（(]([ぁ-ん]+)[）)]/g;
+      const KANJI_KATA_RE = /([\u4e00-\u9fff々〆ヶ]+)([ァ-ヴー]+)[（(]([ぁ-ん]+)[）)]/g;
+
+      function kataToHira(text) {
+        return String(text || "").replace(/[\u30a1-\u30f6]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+      }
+
+      function cleanAndNormalizeRuby(text) {
+        if (!text) return "";
+        let s = String(text);
+        s = s.replace(SAME_HIRA_RE, "$1");
+        s = s.replace(KANJI_INSIDE_RE, "$1");
+        s = s.replace(REVERSE_RUBY_RE, "$2($1)");
+        s = s.replace(DUP_OKURI_RE, "$1($3)$2");
+        s = s.replace(OKURIGANA_RE, (match, kanji, okuri, reading) => {
+          if (reading.endsWith(okuri) && reading.length > okuri.length) {
+            const stem = reading.slice(0, reading.length - okuri.length);
+            return kanji + "(" + stem + ")" + okuri;
+          }
+          return match;
+        });
+        s = s.replace(COMPOUND_HIRA_RE, (match, k1, midHira, k2, reading) => {
+          const idx = reading.indexOf(midHira);
+          if (idx > 0 && idx + midHira.length < reading.length) {
+            const p1 = reading.slice(0, idx);
+            const p2 = reading.slice(idx + midHira.length);
+            return k1 + "(" + p1 + ")" + midHira + k2 + "(" + p2 + ")";
+          }
+          return match;
+        });
+        s = s.replace(KANJI_KATA_RE, (match, kanji, kata, reading) => {
+          const kataHira = kataToHira(kata);
+          if (reading.endsWith(kataHira) && reading.length > kataHira.length) {
+            const stem = reading.slice(0, reading.length - kataHira.length);
+            return kanji + "(" + stem + ")" + kata;
+          }
+          return match;
+        });
+        return s;
+      }
 
       // 文ごとに分けて、読み上げ中の文をハイライトできるようにする
       const SENTENCE_RE = /[^。．！!?\n]+[。．！!?]*/g;
@@ -2593,6 +2639,7 @@
       }
 
       function appendRuby(target, text) {
+        text = cleanAndNormalizeRuby(text);
         let last = 0;
         let match;
         RUBY_RE.lastIndex = 0;
@@ -2616,7 +2663,7 @@
       function renderAnswer(text) {
         answerText.textContent = "";
         sentenceEls = [];
-        sentenceTexts = splitSentences(text);
+        sentenceTexts = splitSentences(cleanAndNormalizeRuby(text));
         sentenceTexts.forEach((sentence, index) => {
           const span = document.createElement("span");
           span.className = "sent";
@@ -2628,7 +2675,7 @@
       }
 
       function toSpeechText(text) {
-        return text
+        return cleanAndNormalizeRuby(text)
           .replace(RUBY_RE, (all, kanji) => kanji)
           .replace(/[（(][^）)]*[）)]/g, "")
           .replace(/\s+/g, " ")

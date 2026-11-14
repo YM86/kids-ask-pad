@@ -1519,35 +1519,107 @@ def snippets_from(annotations):
 
 
 KANJI_CHAR = r"[\u4e00-\u9fff々〆ヶ]"
+KATA_CHAR = r"[ァ-ヴー]"
+HIRA_CHAR = r"[ぁ-ん]"
+KANA_CHAR = r"[ぁ-んァ-ヶー]"
+
 RUBY_PAIR_RE = re.compile(KANJI_CHAR + r"+[（(][ぁ-んァ-ヶー]+[）)]")
 UNANNOTATED_KANJI_RE = re.compile(KANJI_CHAR + r"+")
 
+SAME_HIRA_RE = re.compile(r"(" + HIRA_CHAR + r"+)[（(]\1[）)]")
+KANJI_INSIDE_RUBY_RE = re.compile(r"(" + KANJI_CHAR + r")[（(]\1[）)]")
+REVERSE_RUBY_RE = re.compile(r"(" + KANA_CHAR + r"+)[（(](" + KANJI_CHAR + r"+)[）)]")
+DUP_OKURI_RE = re.compile(r"(" + KANJI_CHAR + r"+)(" + HIRA_CHAR + r"+)[（(](" + HIRA_CHAR + r"+)[）)]\2")
+OKURIGANA_RE = re.compile(r"(" + KANJI_CHAR + r"+)(" + HIRA_CHAR + r"+)[（(](" + HIRA_CHAR + r"+)[）)]")
+COMPOUND_HIRA_RE = re.compile(r"(" + KANJI_CHAR + r"+)(" + HIRA_CHAR + r"+)(" + KANJI_CHAR + r"+)[（(](" + HIRA_CHAR + r"+)[）)]")
+KANJI_KATA_RE = re.compile(r"(" + KANJI_CHAR + r"+)(" + KATA_CHAR + r"+)[（(](" + HIRA_CHAR + r"+)[）)]")
+
+
+def kata_to_hira(text):
+    return "".join(chr(ord(c) - 0x60) if 0x30a1 <= ord(c) <= 0x30f6 else c for c in text)
+
+
+def clean_and_normalize_ruby(text):
+    """LLMが生成したルビのゆらぎ（送り仮名混入、逆順、重複、複合語ルビ）を正規化する。"""
+    text = str(text or "")
+    text = SAME_HIRA_RE.sub(r"\1", text)
+    text = KANJI_INSIDE_RUBY_RE.sub(r"\1", text)
+    text = REVERSE_RUBY_RE.sub(r"\2(\1)", text)
+    text = DUP_OKURI_RE.sub(r"\1(\3)\2", text)
+
+    def repl_okuri(m):
+        kanji = m.group(1)
+        okuri = m.group(2)
+        reading = m.group(3)
+        if reading.endswith(okuri) and len(reading) > len(okuri):
+            stem = reading[:-len(okuri)]
+            return f"{kanji}({stem}){okuri}"
+        return m.group(0)
+    text = OKURIGANA_RE.sub(repl_okuri, text)
+
+    def repl_compound(m):
+        k1 = m.group(1)
+        mid_hira = m.group(2)
+        k2 = m.group(3)
+        reading = m.group(4)
+        if mid_hira in reading:
+            parts = reading.split(mid_hira, 1)
+            if len(parts) == 2 and parts[0] and parts[1]:
+                return f"{k1}({parts[0]}){mid_hira}{k2}({parts[1]})"
+        return m.group(0)
+    text = COMPOUND_HIRA_RE.sub(repl_compound, text)
+
+    def repl_kata(m):
+        kanji = m.group(1)
+        kata = m.group(2)
+        reading = m.group(3)
+        kata_hira = kata_to_hira(kata)
+        if reading.endswith(kata_hira) and len(reading) > len(kata_hira):
+            stem = reading[:-len(kata_hira)]
+            return f"{kanji}({stem}){kata}"
+        return m.group(0)
+    text = KANJI_KATA_RE.sub(repl_kata, text)
+
+    return text
+
 
 def find_unannotated_kanji(text):
-    """(よみ) が付いていない漢字・熟語の一覧を返す。"""
-    stripped = RUBY_PAIR_RE.sub("", str(text or ""))
+    """(よみ) が付いていない漢字・熟語の一覧を返す。事前にルビを正規化してから判定する。"""
+    norm = clean_and_normalize_ruby(text)
+    stripped = RUBY_PAIR_RE.sub("", norm)
     return UNANNOTATED_KANJI_RE.findall(stripped)
 
 
-RUBY_FILL_PROMPT = """あなたは子ども向け日本語文章のルビ（ふりがな）補完係です。
+RUBY_FILL_PROMPT = """あなたは日本語文章のすべての漢字にふりがな（ルビ）を漏れなく付ける専門家です。
 入力された文章の言葉、文構造、ひらがな、カタカナ、句読点、意味は「絶対に1文字も変えず」、
-ふりがなが付いていない漢字だけに「漢字(よみ)」の形式でふりがなを追加してください。
-すでに「漢字(よみ)」が付いているものはそのまま残してください。
+ふりがなが付いていないすべての漢字（動詞、名詞、形容詞、送り仮名を含む漢字、熟語、1文字の漢字などすべて）に「漢字(よみ)」の形式でふりがなを追加してください。
+
+【厳格ルール】
+1. 「使う」「使って」「思う」「思い」「言う」「見る」「出る」「行く」「大きい」「同じ」「多い」「働く」「考える」「小さい」「中」など、よく使う動詞・形容詞・名詞も絶対に省略せず、すべてルビを付けてください。
+   特に「同じ」→「同(おな)じ」、「思い」→「思(おも)い」、「大きな」→「大(おお)きな」、「多く」→「多(おお)く」を忘れないでください。
+2. 送り仮名がある場合は、送り仮名の前にふりがなを付けてください。
+   例: 「使って」→「使(つか)って」、「大きな」→「大(おお)きな」、「多く」→「多(おお)く」、「仕組み」→「仕組(しく)み」、「考えられる」→「考(かんが)えられる」、「働き」→「働(はたら)き」
+3. 複合語（送り仮名やひらがな・カタカナを挟む言葉）は、それぞれの漢字ごとに分けてふりがなを付けてください。
+   例:
+   - 「乗り物」→「乗(の)り物(もの)」（「乗り物(のりもの)」のようにまとめて付けないでください）
+   - 「数か月」→「数(すう)か月」
+   - 「作り出す」→「作(つく)り出(だ)す」
+   - 「受け止める」→「受(う)け止(と)める」
+   - 「超伝導リニア(ちょうでんどうりにあ)」→「超伝導(ちょうでんどう)リニア」
+4. すでに正しく「漢字(よみ)」が付いているものはそのまま残してください。
 
 良い例:
-入力: エヌビディアのフアン社長は、中国の女性と仲良くしていたと新聞に出たんだよ。
-出力: エヌビディアのフアン社長(しゃちょう)は、中国(ちゅうごく)の 女性(じょせい)と 仲良(なかよ)くしていたと 新聞(しんぶん)に 出(で)たんだよ。
+入力: 乗り物は、多くの方に喜ばれ、仕組みが優れています。同じ数か月の間に世界中で使って考えられました。
+出力: 乗(の)り物(もの)は、多(おお)くの 方(かた)に 喜(よろこ)ばれ、仕組(しく)みが 優(すぐ)れています。同(おな)じ 数(すう)か月(げつ)の 間(あいだ)に 世界(せかい)中(じゅう)で 使(つか)って 考(かんが)えられました。
 
 出力は修正後の文章テキストのみを出力してください。解説やマークダウンは一切含めないでください。
 """
 
 
 def fill_missing_ruby(text, mode="kid", cfg=None):
-    """kidモードなどで漢字にふりがなが付いていない場合、文章を変えずにルビだけを補完する。"""
+    """kid/teenモードで漢字にふりがなが付いていない場合、文章を変えずにルビだけを補完する。"""
     unannotated = find_unannotated_kanji(text)
     if not unannotated:
-        return text
-    if mode == "teen" and len(unannotated) <= 2:
         return text
     if cfg is None:
         cfg = read_config()
@@ -1557,11 +1629,12 @@ def fill_missing_ruby(text, mode="kid", cfg=None):
         {"role": "user", "content": text},
     ]
     try:
-        data = ai_chat(model, messages, 800, 0.0, None, timeout=14, reasoning={"enabled": False}, cfg=cfg)
+        data = ai_chat(model, messages, 1200, 0.0, None, timeout=14, reasoning={"enabled": False}, cfg=cfg)
         msg = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
         cleaned = clean_text(msg)
-        if cleaned and len(find_unannotated_kanji(cleaned)) < len(unannotated):
-            return cleaned
+        cleaned_norm = clean_and_normalize_ruby(cleaned)
+        if cleaned_norm and len(find_unannotated_kanji(cleaned_norm)) < len(unannotated):
+            return cleaned_norm
     except Exception as exc:
         print("fill-ruby-failed:", exc, file=sys.stderr)
     return text
@@ -1727,23 +1800,22 @@ def handle_question(question, mode="kid"):
         file=sys.stderr,
     )
 
-    # ふりがなが不足している場合は、文章の意味を変えずにルビを補完する
-    if mode == "kid" and find_unannotated_kanji(answer):
-        ruby_fixed = fill_missing_ruby(answer, mode, cfg)
-        if ruby_fixed:
-            answer = ruby_fixed
-    elif mode == "teen" and len(find_unannotated_kanji(answer)) >= 3:
-        ruby_fixed = fill_missing_ruby(answer, mode, cfg)
-        if ruby_fixed:
-            answer = ruby_fixed
-
-    # よみが まちがっている という 指摘だけは、その場で 読みを外す（害がない片方向の修正）
+    # 1. よみが まちがっている という 指摘がある場合は、その場で読みを外す
     for pair in check.get("wrong_readings") or []:
         base = pair.split("(")[0].split("（")[0]
         if not base:
             continue
         for left, right in ("(", ")"), ("（", "）"):
             answer = re.sub(re.escape(base) + re.escape(left) + r"[^" + re.escape(right) + r"]*" + re.escape(right), base, answer)
+
+    # 2. ルビの正規化（送り仮名混入・逆順・重複・複合語のゆらぎ解消）
+    answer = clean_and_normalize_ruby(answer)
+
+    # 3. ふりがなが不足している場合は、文章の意味を変えずにルビを補完する（kid/teen問わず未ルビ漢字があれば実行）
+    if find_unannotated_kanji(answer):
+        ruby_fixed = fill_missing_ruby(answer, mode, cfg)
+        if ruby_fixed:
+            answer = clean_and_normalize_ruby(ruby_fixed)
 
     guard = safety_check(answer, category, cfg)
     cost += guard.get("cost", 0.0)
@@ -1806,7 +1878,7 @@ def handle_question(question, mode="kid"):
         "estimate": usage_summary(),
         "sources": result["sources"],
         "source_links": result.get("source_links") or [],
-        "related_questions": check.get("related_questions") or [],
+        "related_questions": [clean_and_normalize_ruby(q) for q in (check.get("related_questions") or [])],
         "notice": notice,
         "cost": round(cost, 6),
         "query": result.get("query"),
