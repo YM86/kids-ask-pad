@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="theme-color" content="#f4f2ec">
   <title>しつもんしてね</title>
   <style>
@@ -53,6 +56,43 @@
     }
 
     .usage .sep { color: #c9cec5; }
+
+    .top-settings-btn {
+      margin-left: auto;
+      padding: 3px 10px;
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .top-settings-btn:hover {
+      background: #e2e8f0;
+      border-color: #94a3b8;
+    }
+
+    .error-admin-btn {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 6px 16px;
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
+    }
+    .error-admin-btn:hover {
+      background: #0369a1;
+    }
 
     .back {
       display: inline-flex;
@@ -682,6 +722,7 @@
       <span>のこり</span><b id="usage-remaining">—</b><span>回</span>
       <span class="sep" aria-hidden="true">｜</span>
       <span>この しつもん</span><b id="usage-last">—</b>
+      <button class="top-settings-btn" id="top-settings-btn" type="button" title="おうちの ひと向け 設定をひらく">⚙️ 設定</button>
     </div>
     <p class="topline"><span class="mark" aria-hidden="true">？</span> しつもんしてね</p>
     <h1>しりたいことを、おしえてね</h1>
@@ -777,7 +818,7 @@
         </div>
       </div>
 
-      <div id="admin-body" hidden>
+      <div id="admin-body">
         <p class="admin-sub" style="margin-top:0;padding-top:0;border-top:0;">0. AIサービスとAPIキー設定（ローカル保存）</p>
         <div class="admin-grid">
           <div class="admin-field">
@@ -2728,11 +2769,35 @@
         speakNext();
       }
 
+      function openAdmin() {
+        adminPanel.classList.add("on");
+        adminToggle.setAttribute("aria-expanded", "true");
+        loadAdminState();
+        adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTimeout(() => {
+          const keyInput = document.getElementById("cfg-api-key");
+          if (keyInput) keyInput.focus();
+        }, 350);
+      }
+
       function showError(message) {
         answerBox.classList.remove("on");
         thinking.classList.remove("on");
-        errorBox.textContent = message;
+        errorBox.textContent = "";
         errorBox.classList.add("on");
+        const span = document.createElement("span");
+        span.textContent = message;
+        errorBox.appendChild(span);
+        if (message.indexOf("APIキー") >= 0 || message.indexOf("おうちの ひとへ") >= 0 || message.indexOf("設定") >= 0) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "error-admin-btn";
+          btn.textContent = "⚙️ 設定画面をひらく";
+          btn.addEventListener("click", () => {
+            openAdmin();
+          });
+          errorBox.appendChild(btn);
+        }
       }
 
       function renderRelatedQuestions(list) {
@@ -3153,13 +3218,20 @@
 
       adminToggle.addEventListener("click", () => {
         const open = !adminPanel.classList.contains("on");
-        adminPanel.classList.toggle("on", open);
-        adminToggle.setAttribute("aria-expanded", String(open));
         if (open) {
-          loadAdminState();
-          adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+          openAdmin();
+        } else {
+          adminPanel.classList.remove("on");
+          adminToggle.setAttribute("aria-expanded", "false");
         }
       });
+
+      const topSettingsBtn = document.getElementById("top-settings-btn");
+      if (topSettingsBtn) {
+        topSettingsBtn.addEventListener("click", () => {
+          openAdmin();
+        });
+      }
 
       adminClose.addEventListener("click", () => {
         adminPanel.classList.remove("on");
