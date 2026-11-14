@@ -1204,8 +1204,13 @@ def _answer_call(query_text, question, prompt, ask_line, limits, cfg):
         {"role": "user", "content": user_content},
     ]
     plugins = [{"id": "web", "max_results": WEB_RESULTS}]
+    models_to_try = []
+    default_fb = "gemini-flash-lite-latest" if cfg.get("provider") == "google" else "z-ai/glm-5.3-flash"
+    for m in (cfg.get("answer_model"), cfg.get("answer_fallback"), default_fb):
+        if m and m not in models_to_try:
+            models_to_try.append(m)
     last = None
-    for model in (cfg["answer_model"], cfg["answer_fallback"]):
+    for model in models_to_try:
         try:
             data = ai_chat(model, messages, limits["max_tokens"], 0.3, plugins,
                            ANSWER_TIMEOUT, reasoning={"effort": "low"}, cfg=cfg)
@@ -1266,8 +1271,13 @@ def ask_with_knowledge(question, mode="kid", category="ok", cfg=None):
         {"role": "system", "content": prompt},
         {"role": "user", "content": "%s\n<question>%s</question>" % (ask_line, safe_q)},
     ]
+    models_to_try = []
+    default_fb = "gemini-flash-lite-latest" if cfg.get("provider") == "google" else "z-ai/glm-5.3-flash"
+    for m in (cfg.get("answer_model"), cfg.get("answer_fallback"), default_fb):
+        if m and m not in models_to_try:
+            models_to_try.append(m)
     last = None
-    for model in (cfg["answer_model"], cfg["answer_fallback"]):
+    for model in models_to_try:
         try:
             data = ai_chat(model, messages, limits["max_tokens"], 0.2, None,
                            ANSWER_TIMEOUT, reasoning={"effort": "low"}, cfg=cfg)
@@ -1685,7 +1695,7 @@ def sentences(text, limit=4, max_chars=420):
 
 # ---------------------------------------------------------------- 問い合わせ処理
 
-def handle_question(question, mode="kid"):
+def handle_question(question, mode="kid", force_search=False):
     cfg = read_config()
     limits = get_mode_limits(mode, cfg)
     if not get_api_key(cfg):
@@ -1701,6 +1711,10 @@ def handle_question(question, mode="kid"):
             "message": "きょうは たくさん おしゃべりしたから、また あしたに してね。",
         }
     category, query, category_cost, category_tokens, needs_search = classify_and_rewrite_ex(question, cfg)
+    if force_search and category not in DECLINE_MESSAGES:
+        needs_search = True
+        if not query:
+            query = sanitize_search_query(question)
     if category in DECLINE_MESSAGES:
         messages = DECLINE_MESSAGES_TEEN if mode == "teen" else DECLINE_MESSAGES
         add_spend(category_cost)
@@ -2113,6 +2127,7 @@ class Handler(BaseHTTPRequestHandler):
         mode = str(data.get("mode") or "kid").strip().lower()
         if mode not in ("kid", "teen"):
             mode = "kid"
+        force_search = bool(data.get("force_search") or data.get("search") or data.get("retry"))
         if len(question) < 2:
             return self._finish(400, {"error": "empty", "message": "しりたい ことを かいてね。"},
                                 question, ip, started, mode=mode)
@@ -2132,7 +2147,7 @@ class Handler(BaseHTTPRequestHandler):
                 "message": "いま いそがしいみたい。すこし まってから きいてね。",
             }, question, ip, started, mode=mode)
         try:
-            code, payload = handle_question(question, mode)
+            code, payload = handle_question(question, mode, force_search=force_search)
         finally:
             _sem.release()
         return self._finish(code, payload, question, ip, started, mode=mode)
