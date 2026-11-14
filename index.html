@@ -970,15 +970,13 @@
       const DEFAULT_CATALOG_GOOGLE = {
         answer: [
           { id: "gemini-flash-lite-latest", label: "Gemini Flash-Lite（超高速・無料枠あり）" },
-          { id: "gemini-3-flash-preview", label: "Gemini 3 Flash（高精度・高速・無料枠あり）" },
-          { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite（無料枠あり）" },
-          { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
-          { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }
+          { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite（高速・高精度）" },
+          { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash（標準）" },
+          { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" }
         ],
         verify: [
           { id: "gemini-flash-lite-latest", label: "Gemini Flash-Lite（超高速検証）" },
-          { id: "gemini-3-flash-preview", label: "Gemini 3 Flash（高精度検証）" },
-          { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite（高速検証）" },
+          { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite（高精度検証）" },
           { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" }
         ]
       };
@@ -1129,7 +1127,7 @@
         const userMsg = hasSnippets
           ? "<material>\n" + snippets.join("\n") + "\n</material>\n\n<answer>\n" + answerText + "\n</answer>"
           : "<question>\n" + safeQ + "\n</question>\n\n<answer>\n" + answerText + "\n</answer>";
-        const cleanModel = (verifyModel || "gemini-2.5-flash-lite").replace(/^google\//, "");
+        const cleanModel = (verifyModel || "gemini-flash-lite-latest").replace(/^google\//, "");
         try {
           const vRes = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(cleanModel) + ":generateContent?key=" + encodeURIComponent(apiKey), {
             method: "POST",
@@ -1168,6 +1166,49 @@
         }
       }
 
+      async function searchWikipediaClient(question) {
+        let q = String(question || "").replace(/[？?！!。、\s]/g, " ").trim();
+        q = q.replace(/(は|って|の|を|に|へ|と|から|より|で|について|教えて|おしえて|なぜ|どうして|なんですか|なに|何|誰|だれ|どこ|いつ|いくつ|いくら)+$/g, "").trim();
+        if (!q) q = String(question || "").slice(0, 30);
+        try {
+          const sUrl = "https://ja.wikipedia.org/w/api.php?action=opensearch&search=" + encodeURIComponent(q) + "&limit=3&format=json&origin=*";
+          const sRes = await fetch(sUrl);
+          if (!sRes.ok) return { snippets: [], links: [] };
+          const sData = await sRes.json();
+          let titles = Array.isArray(sData[1]) ? sData[1] : [];
+          let urls = Array.isArray(sData[3]) ? sData[3] : [];
+          if (!titles.length) {
+            const words = q.match(/[\u4e00-\u9fff]{2,}|[ァ-ヴー]{2,}/g);
+            if (words && words.length && words[0] !== q) {
+              const rUrl = "https://ja.wikipedia.org/w/api.php?action=opensearch&search=" + encodeURIComponent(words[0]) + "&limit=3&format=json&origin=*";
+              const rRes = await fetch(rUrl);
+              if (rRes.ok) {
+                const rData = await rRes.json();
+                titles = Array.isArray(rData[1]) ? rData[1] : [];
+                urls = Array.isArray(rData[3]) ? rData[3] : [];
+              }
+            }
+          }
+          if (!titles.length) return { snippets: [], links: [] };
+          const topTitle = titles[0];
+          const topUrl = urls[0] || ("https://ja.wikipedia.org/wiki/" + encodeURIComponent(topTitle));
+          const extUrl = "https://ja.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&titles=" + encodeURIComponent(topTitle) + "&format=json&origin=*";
+          const extRes = await fetch(extUrl);
+          let extract = "";
+          if (extRes.ok) {
+            const extData = await extRes.json();
+            const pages = ((extData.query || {}).pages || {});
+            const p = Object.values(pages)[0] || {};
+            extract = String(p.extract || "").trim();
+          }
+          const links = [{ host: "ja.wikipedia.org", title: "Wikipedia: " + topTitle, url: topUrl }];
+          const snippets = extract ? [extract.slice(0, 800)] : [topTitle];
+          return { snippets, links, title: topTitle };
+        } catch (_) {
+          return { snippets: [], links: [] };
+        }
+      }
+
       async function askDirectGoogle(question, currentMode, forceSearch = false) {
         const cfg = readLocalConfig();
         const apiKey = String(cfg.google_api_key || "").trim();
@@ -1196,8 +1237,9 @@
         let verdict = "supported";
         let answerType = "knowledge";
         let directRelated = [];
-        const ansModel = (cfg.google_answer_model || cfg.answer_model || "gemini-2.5-flash").replace(/^google\//, "");
-        const vrfModel = (cfg.google_verify_model || cfg.verify_model || "gemini-2.5-flash-lite").replace(/^google\//, "");
+        let directNotice = "";
+        const ansModel = (cfg.google_answer_model || cfg.answer_model || "gemini-flash-lite-latest").replace(/^google\//, "");
+        const vrfModel = (cfg.google_verify_model || cfg.verify_model || "gemini-flash-lite-latest").replace(/^google\//, "");
 
         if (!useSearch) {
           const kPrompt = basePrompt + " 教科書や公的機関で広く認められている確かな常識・基本知識だけを使って答えてください。もし最新情報やWeb検索が必要な質問であれば、本文は書かずに NEED_SEARCH とだけ出力してください。";
@@ -1256,61 +1298,139 @@
 
         if (useSearch) {
           answerType = "search";
-          const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(ansModel) + ":generateContent?key=" + encodeURIComponent(apiKey), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: "<question>" + safeQ + "</question>" }] }],
-              systemInstruction: { parts: [{ text: basePrompt }] },
-              tools: [{ googleSearch: {} }],
-              generationConfig: {
-                temperature: 0.3,
-                maxOutputTokens: currentMode === "teen" ? 1100 : 800
+          let searchDone = false;
+          let cand = null;
+          let usage = null;
+          try {
+            const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(ansModel) + ":generateContent?key=" + encodeURIComponent(apiKey), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: "<question>" + safeQ + "</question>" }] }],
+                systemInstruction: { parts: [{ text: basePrompt }] },
+                tools: [{ googleSearch: {} }],
+                generationConfig: {
+                  temperature: 0.3,
+                  maxOutputTokens: currentMode === "teen" ? 1100 : 800
+                }
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              cand = ((data.candidates || [])[0] || {});
+              const parts = ((cand.content || {}).parts || []);
+              const rawTxt = parts.map(p => p.text || "").join("");
+              if (rawTxt) {
+                text = clipAnswerText(rawTxt, maxSent, maxChars);
+                usage = data.usageMetadata || {};
+                searchDone = true;
               }
-            })
-          });
-          if (!res.ok) {
-            throw { userMessage: "Google AI Studio への通信に失敗しました（ステータス " + res.status + "）。APIキーや設定を確かめてね。" };
+            } else if (res.status !== 429 && res.status !== 400) {
+              throw { userMessage: "Google AI Studio への通信に失敗しました（ステータス " + res.status + "）。APIキーや設定を確かめてね。" };
+            }
+          } catch (netErr) {
+            if (netErr && netErr.userMessage) throw netErr;
           }
-          const data = await res.json();
-          const cand = ((data.candidates || [])[0] || {});
-          const parts = ((cand.content || {}).parts || []);
-          text = clipAnswerText(parts.map(p => p.text || "").join(""), maxSent, maxChars);
 
-          const grounding = cand.groundingMetadata || {};
-          const chunks = grounding.groundingChunks || [];
-          const snippets = [];
-          const seen = new Set();
-          for (const chunk of chunks) {
-            const web = chunk.web || {};
-            const url = String(web.uri || "").trim();
-            const title = String(web.title || "").trim();
-            if (title) snippets.push(title);
-            if (!/^https?:\/\//i.test(url)) continue;
-            const host = url.replace(/^https?:\/\//i, "").split("/")[0].replace(/^www\./i, "").toLowerCase();
-            if (!host || seen.has(host)) continue;
-            seen.add(host);
-            links.push({ host, url, title: title || host });
-            if (links.length >= 4) break;
-          }
-          const usage = data.usageMetadata || {};
-          totalTok += Number(usage.promptTokenCount || 0) + Number(usage.candidatesTokenCount || 0);
-
-          if (snippets.length) {
-            const vCheck = await verifyDirectGoogle(apiKey, vrfModel, safeQ, text, snippets.slice(0, 4), currentMode);
-            totalTok += vCheck.tokens;
-            verdict = vCheck.verdict || "supported";
-            if (vCheck.fixed_answer) {
-              const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
-              if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
-                text = fixed;
+          if (searchDone && cand) {
+            const grounding = cand.groundingMetadata || {};
+            const chunks = grounding.groundingChunks || [];
+            const snippets = [];
+            const seen = new Set();
+            for (const chunk of chunks) {
+              const web = chunk.web || {};
+              const url = String(web.uri || "").trim();
+              const title = String(web.title || "").trim();
+              if (title) snippets.push(title);
+              if (!/^https?:\/\//i.test(url)) continue;
+              const host = url.replace(/^https?:\/\//i, "").split("/")[0].replace(/^www\./i, "").toLowerCase();
+              if (!host || seen.has(host)) continue;
+              seen.add(host);
+              links.push({ host, url, title: title || host });
+              if (links.length >= 4) break;
+            }
+            if (usage) {
+              totalTok += Number(usage.promptTokenCount || 0) + Number(usage.candidatesTokenCount || 0);
+            }
+            if (snippets.length) {
+              const vCheck = await verifyDirectGoogle(apiKey, vrfModel, safeQ, text, snippets.slice(0, 4), currentMode);
+              totalTok += vCheck.tokens;
+              verdict = vCheck.verdict || "supported";
+              if (vCheck.fixed_answer) {
+                const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
+                if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
+                  text = fixed;
+                }
               }
+              for (const pair of (vCheck.wrong_readings || [])) {
+                const base = String(pair || "").split("(")[0].split("（")[0];
+                if (base) text = text.split(pair).join(base);
+              }
+              directRelated = vCheck.related_questions || [];
             }
-            for (const pair of (vCheck.wrong_readings || [])) {
-              const base = String(pair || "").split("(")[0].split("（")[0];
-              if (base) text = text.split(pair).join(base);
+          } else {
+            // Google Search ツールが無料枠制限（429）やモデル非対応（400）の場合は Wikipedia / 詳細プロンプトでフォールバック
+            const wiki = await searchWikipediaClient(question);
+            let sPrompt = basePrompt;
+            let uPrompt = "<question>" + safeQ + "</question>";
+            const hasWiki = wiki.snippets && wiki.snippets.length > 0;
+            if (hasWiki) {
+              links = wiki.links || [];
+              sPrompt += " 以下の参考資料(<material>)の内容をふまえ、確かな事実を子どもに分かりやすく説明してください。";
+              uPrompt = "<material>\n" + wiki.snippets.join("\n") + "\n</material>\n\n<question>" + safeQ + "</question>";
+            } else {
+              sPrompt += " この質問について最新の状況や詳しい背景を調べ直すように、具体例や数字・理由を交えて順序立てて分かりやすく説明してください。";
             }
-            directRelated = vCheck.related_questions || [];
+
+            const fbRes = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(ansModel) + ":generateContent?key=" + encodeURIComponent(apiKey), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: uPrompt }] }],
+                systemInstruction: { parts: [{ text: sPrompt }] },
+                generationConfig: {
+                  temperature: 0.35,
+                  maxOutputTokens: currentMode === "teen" ? 1100 : 800
+                }
+              })
+            });
+            if (!fbRes.ok) {
+              throw { userMessage: "Google AI Studio への通信に失敗しました（ステータス " + fbRes.status + "）。APIキーや設定を確かめてね。" };
+            }
+            const fbData = await fbRes.json();
+            const fbCand = ((fbData.candidates || [])[0] || {});
+            const fbParts = ((fbCand.content || {}).parts || []);
+            text = clipAnswerText(fbParts.map(p => p.text || "").join(""), maxSent, maxChars);
+            const fbUsage = fbData.usageMetadata || {};
+            totalTok += Number(fbUsage.promptTokenCount || 0) + Number(fbUsage.candidatesTokenCount || 0);
+
+            if (hasWiki) {
+              directNotice = currentMode === "teen"
+                ? "※Google無料枠（Web検索制限）のため、Wikipedia百科事典の最新資料を参照して調べ直しました。"
+                : "※ウィキペディア百科事典の しりょうを しらべて こたえなおしたよ。";
+              const vCheck = await verifyDirectGoogle(apiKey, vrfModel, safeQ, text, wiki.snippets.slice(0, 4), currentMode);
+              totalTok += vCheck.tokens;
+              verdict = vCheck.verdict || "supported";
+              if (vCheck.fixed_answer) {
+                const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
+                if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
+                  text = fixed;
+                }
+              }
+              for (const pair of (vCheck.wrong_readings || [])) {
+                const base = String(pair || "").split("(")[0].split("（")[0];
+                if (base) text = text.split(pair).join(base);
+              }
+              directRelated = vCheck.related_questions || [];
+            } else {
+              directNotice = currentMode === "teen"
+                ? "※Google無料枠ではリアルタイムWeb検索が制限されているため、AI最新知識から詳しく調べ直して再回答しました。"
+                : "※インターネットの最新ちしきから、もっとくわしく しらべなおしたよ。";
+              const vCheck = await verifyDirectGoogle(apiKey, vrfModel, safeQ, text, [], currentMode);
+              totalTok += vCheck.tokens;
+              verdict = vCheck.verdict || "supported";
+              directRelated = vCheck.related_questions || [];
+            }
           }
         }
 
@@ -1331,6 +1451,7 @@
           answer: text,
           verdict,
           answer_type: answerType,
+          notice: directNotice || null,
           sources: links.map(l => l.host),
           source_links: links,
           related_questions: directRelated,
@@ -1473,65 +1594,150 @@
           }
         }
 
+        let directNotice = "";
         // 2. 最新情報や検索が必要な質問（または知識ベリファイで検索へ切り替わった場合）
         if (useSearch) {
           answerType = "search";
-          const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": "Bearer " + apiKey,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              model: cfg.answer_model || "z-ai/glm-5.3-flash",
-              messages: [
-                { role: "system", content: basePrompt },
-                { role: "user", content: "<question>" + safeQ + "</question>" }
-              ],
-              plugins: [{ id: "web", max_results: 5 }],
-              max_tokens: currentMode === "teen" ? 1100 : 800,
-              temperature: 0.3
-            })
-          });
-          if (!res.ok) {
-            throw { userMessage: "OpenRouter への通信に失敗しました（ステータス " + res.status + "）。APIキーや設定を確かめてね。" };
-          }
-          const data = await res.json();
-          const msg = ((data.choices || [])[0] || {}).message || {};
-          text = clipAnswerText(msg.content || "", maxSent, maxChars);
-          const annotations = msg.annotations || [];
-          const snippets = [];
-          const seen = new Set();
-          for (const item of annotations) {
-            const cite = (item && item.url_citation) || {};
-            const url = String(cite.url || "").trim();
-            if (cite.content || cite.title) snippets.push(String(cite.content || cite.title).slice(0, 800));
-            if (!/^https?:\/\//i.test(url)) continue;
-            const host = url.replace(/^https?:\/\//i, "").split("/")[0].replace(/^www\./i, "").toLowerCase();
-            if (!host || seen.has(host)) continue;
-            seen.add(host);
-            links.push({ host, url, title: cite.title || host });
-            if (links.length >= 4) break;
-          }
-          const usage = data.usage || {};
-          totalTok += Number(usage.prompt_tokens || 0) + Number(usage.completion_tokens || 0);
-          totalCost += Number(usage.cost || 0);
-          if (snippets.length) {
-            const vCheck = await verifyDirectOpenRouter(apiKey, cfg.verify_model, safeQ, text, snippets.slice(0, 4), currentMode);
-            totalTok += vCheck.tokens;
-            totalCost += vCheck.cost;
-            verdict = vCheck.verdict || "supported";
-            if (vCheck.fixed_answer) {
-              const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
-              if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
-                text = fixed;
+          let searchDone = false;
+          let candMsg = null;
+          let usage = null;
+          try {
+            const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": "Bearer " + apiKey,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                model: cfg.answer_model || "z-ai/glm-5.3-flash",
+                messages: [
+                  { role: "system", content: basePrompt },
+                  { role: "user", content: "<question>" + safeQ + "</question>" }
+                ],
+                plugins: [{ id: "web", max_results: 5 }],
+                max_tokens: currentMode === "teen" ? 1100 : 800,
+                temperature: 0.3
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              candMsg = ((data.choices || [])[0] || {}).message || {};
+              const rawTxt = candMsg.content || "";
+              if (rawTxt) {
+                text = clipAnswerText(rawTxt, maxSent, maxChars);
+                usage = data.usage || {};
+                searchDone = true;
               }
+            } else if (res.status !== 402 && res.status !== 400) {
+              throw { userMessage: "OpenRouter への通信に失敗しました（ステータス " + res.status + "）。APIキーや設定を確かめてね。" };
             }
-            for (const pair of (vCheck.wrong_readings || [])) {
-              const base = String(pair || "").split("(")[0].split("（")[0];
-              if (base) text = text.split(pair).join(base);
+          } catch (netErr) {
+            if (netErr && netErr.userMessage) throw netErr;
+          }
+
+          if (searchDone && candMsg) {
+            const annotations = candMsg.annotations || [];
+            const snippets = [];
+            const seen = new Set();
+            for (const item of annotations) {
+              const cite = (item && item.url_citation) || {};
+              const url = String(cite.url || "").trim();
+              if (cite.content || cite.title) snippets.push(String(cite.content || cite.title).slice(0, 800));
+              if (!/^https?:\/\//i.test(url)) continue;
+              const host = url.replace(/^https?:\/\//i, "").split("/")[0].replace(/^www\./i, "").toLowerCase();
+              if (!host || seen.has(host)) continue;
+              seen.add(host);
+              links.push({ host, url, title: cite.title || host });
+              if (links.length >= 4) break;
             }
-            var directRelated = vCheck.related_questions || [];
+            if (usage) {
+              totalTok += Number(usage.prompt_tokens || 0) + Number(usage.completion_tokens || 0);
+              totalCost += Number(usage.cost || 0);
+            }
+            if (snippets.length) {
+              const vCheck = await verifyDirectOpenRouter(apiKey, cfg.verify_model, safeQ, text, snippets.slice(0, 4), currentMode);
+              totalTok += vCheck.tokens;
+              totalCost += vCheck.cost;
+              verdict = vCheck.verdict || "supported";
+              if (vCheck.fixed_answer) {
+                const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
+                if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
+                  text = fixed;
+                }
+              }
+              for (const pair of (vCheck.wrong_readings || [])) {
+                const base = String(pair || "").split("(")[0].split("（")[0];
+                if (base) text = text.split(pair).join(base);
+              }
+              var directRelated = vCheck.related_questions || [];
+            }
+          } else {
+            // Webプラグインが使えない場合のWikipedia・詳細プロンプトフォールバック
+            const wiki = await searchWikipediaClient(question);
+            let sPrompt = basePrompt;
+            let uPrompt = "<question>" + safeQ + "</question>";
+            const hasWiki = wiki.snippets && wiki.snippets.length > 0;
+            if (hasWiki) {
+              links = wiki.links || [];
+              sPrompt += " 以下の参考資料(<material>)の内容をふまえ、確かな事実を子どもに分かりやすく説明してください。";
+              uPrompt = "<material>\n" + wiki.snippets.join("\n") + "\n</material>\n\n<question>" + safeQ + "</question>";
+            } else {
+              sPrompt += " この質問について最新の状況や詳しい背景を調べ直すように、具体例や数字・理由を交えて順序立てて分かりやすく説明してください。";
+            }
+            const fbRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": "Bearer " + apiKey,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                model: cfg.answer_model || "z-ai/glm-5.3-flash",
+                messages: [
+                  { role: "system", content: sPrompt },
+                  { role: "user", content: uPrompt }
+                ],
+                max_tokens: currentMode === "teen" ? 1100 : 800,
+                temperature: 0.35
+              })
+            });
+            if (!fbRes.ok) {
+              throw { userMessage: "OpenRouter への通信に失敗しました（ステータス " + fbRes.status + "）。APIキーや設定を確かめてね。" };
+            }
+            const fbData = await fbRes.json();
+            const fbMsg = ((fbData.choices || [])[0] || {}).message || {};
+            text = clipAnswerText(fbMsg.content || "", maxSent, maxChars);
+            const fbUsage = fbData.usage || {};
+            totalTok += Number(fbUsage.prompt_tokens || 0) + Number(fbUsage.completion_tokens || 0);
+            totalCost += Number(fbUsage.cost || 0);
+            if (hasWiki) {
+              directNotice = currentMode === "teen"
+                ? "※Web検索プラグイン未利用のため、Wikipedia百科事典の最新資料を参照して調べ直しました。"
+                : "※ウィキペディア百科事典の しりょうを しらべて こたえなおしたよ。";
+              const vCheck = await verifyDirectOpenRouter(apiKey, cfg.verify_model, safeQ, text, wiki.snippets.slice(0, 4), currentMode);
+              totalTok += vCheck.tokens;
+              totalCost += vCheck.cost;
+              verdict = vCheck.verdict || "supported";
+              if (vCheck.fixed_answer) {
+                const fixed = clipAnswerText(vCheck.fixed_answer, maxSent, maxChars);
+                if (vCheck.verdict === "partly" || (findUnannotatedKanji(text).length > 0 && findUnannotatedKanji(fixed).length < findUnannotatedKanji(text).length)) {
+                  text = fixed;
+                }
+              }
+              for (const pair of (vCheck.wrong_readings || [])) {
+                const base = String(pair || "").split("(")[0].split("（")[0];
+                if (base) text = text.split(pair).join(base);
+              }
+              var directRelated = vCheck.related_questions || [];
+            } else {
+              directNotice = currentMode === "teen"
+                ? "※Web検索プラグイン未利用のため、AI知識モデルから詳細に調べ直して再回答しました。"
+                : "※インターネットの最新ちしきから、もっとくわしく しらべなおしたよ。";
+              const vCheck = await verifyDirectOpenRouter(apiKey, cfg.verify_model, safeQ, text, [], currentMode);
+              totalTok += vCheck.tokens;
+              totalCost += vCheck.cost;
+              verdict = vCheck.verdict || "supported";
+              var directRelated = vCheck.related_questions || [];
+            }
           }
         }
 
@@ -1544,12 +1750,14 @@
           q: question,
           a: text,
           verdict,
+          sources: links.map((l) => l.host),
           tokens: totalTok
         });
         return {
           answer: text,
           verdict,
           answer_type: answerType,
+          notice: directNotice || null,
           sources: links.map((l) => l.host),
           source_links: links,
           related_questions: (typeof directRelated !== "undefined" && directRelated) ? directRelated : [],
@@ -2868,7 +3076,7 @@
           b.textContent = "しらべた ところ：";
           sources.appendChild(b);
           sources.appendChild(document.createTextNode(
-            mode === "teen" ? "Web検索（最新情報を確認）" : "ネットけんさく"
+            mode === "teen" ? "Web検索・詳細知識（再調査）" : "ネットしらべなおし"
           ));
         } else if (data.answer_type === "knowledge") {
           const b = document.createElement("b");
@@ -2889,11 +3097,14 @@
         errorBox.classList.remove("on");
         answerBox.classList.remove("on");
         thinking.classList.add("on");
-        thinkingText.textContent = forceSearch ? "ネットで しらべているよ…" : stages[0];
+        const activeStages = forceSearch
+          ? (mode === "teen" ? ["Webで最新情報を調べています…", "資料の事実関係を確認しています…", "もう少々お待ちください…"] : ["ネットで しらべているよ…", "しりょうを たしかめているよ…", "もうすこし まってね…"])
+          : stages;
+        thinkingText.textContent = activeStages[0];
         let stage = 0;
         stageTimer = setInterval(() => {
-          stage = Math.min(stage + 1, stages.length - 1);
-          thinkingText.textContent = stages[stage];
+          stage = Math.min(stage + 1, activeStages.length - 1);
+          thinkingText.textContent = activeStages[stage];
         }, 4500);
         setBusy(true);
 
@@ -2986,7 +3197,8 @@
       document.getElementById("mode-kid").addEventListener("click", () => setMode("kid"));
       document.getElementById("mode-teen").addEventListener("click", () => setMode("teen"));
       againBtn.addEventListener("click", () => {
-        if (lastQuestion) ask(lastQuestion, true);
+        const q = (lastQuestion || input.value || "").trim();
+        if (q) ask(q, true);
       });
 
       // ---------------------------------------------------------------- 管理者画面
@@ -3052,10 +3264,10 @@
           cfgApiKeyStatus.textContent = cfg.has_google_key ? ("設定済み: " + (cfg.google_key_masked || "***")) : (cfg.has_api_key && cfg.provider === "google" ? ("設定済み: " + (cfg.api_key_masked || "***")) : "未設定");
           cfgApiKey.placeholder = "AIzaSy...（無料キー・変更時に入力）";
           if (cfgApiKeyHelp) {
-            cfgApiKeyHelp.innerHTML = 'Google AI Studio（<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>）で無料取得できるAPIキーです（Gemini 2.5 Flash など1日1,500回まで無料）。サーバー起動中は <code>data/config.json</code> に保存し、ブラウザー直接利用時は <code>localStorage</code> にのみ保存します。';
+            cfgApiKeyHelp.innerHTML = 'Google AI Studio（<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>）で無料取得できるAPIキーです（Gemini Flash-Lite や 3.5 Flash-Lite など1日1,500回まで無料）。サーバー起動中は <code>data/config.json</code> に保存し、ブラウザー直接利用時は <code>localStorage</code> にのみ保存します。';
           }
-          fillSelect(cfgAnswerModel, catalog.answer, cfg.google_answer_model || (cfg.provider === "google" ? cfg.answer_model : "gemini-2.5-flash"));
-          fillSelect(cfgVerifyModel, catalog.verify, cfg.google_verify_model || (cfg.provider === "google" ? cfg.verify_model : "gemini-2.5-flash-lite"));
+          fillSelect(cfgAnswerModel, catalog.answer, cfg.google_answer_model || (cfg.provider === "google" ? cfg.answer_model : "gemini-flash-lite-latest"));
+          fillSelect(cfgVerifyModel, catalog.verify, cfg.google_verify_model || (cfg.provider === "google" ? cfg.verify_model : "gemini-flash-lite-latest"));
         } else {
           if (cfgApiKeyLabel) cfgApiKeyLabel.textContent = "OpenRouter APIキー";
           cfgApiKeyStatus.textContent = cfg.has_openrouter_key ? ("設定済み: " + (cfg.openrouter_key_masked || "***")) : (cfg.has_api_key && cfg.provider === "openrouter" ? ("設定済み: " + (cfg.api_key_masked || "***")) : "未設定");
