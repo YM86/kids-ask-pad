@@ -2,11 +2,46 @@
 data/
 *.env
 .env*
+ai.env
 config.json
 spend.json
 tokens.json
 qa-*.jsonl
+*.log
+logs/
+
+# Secrets, certificates, and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+*.pkcs12
+id_rsa*
+id_ed25519*
+credentials*.json
+client_secret*.json
+service_account*.json
+*.credentials
+
+# Temporary and backup files
+*.bak
+*.tmp
+*.temp
+*~
+*.swp
+sec_payload.json
+branch_protection.json
+
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+
+# IDE and OS files
 .DS_Store
 Thumbs.db
+ehthumbs.db
+.vscode/
+.idea/

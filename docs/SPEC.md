@@ -1,8 +1,8 @@
 # 「しつもんしてね」仕様書
 
 最終更新: 2026-11-12（第3版）
-対象: `http://192.168.0.4/ask/`（LXC 101 `draw-pad`）
-ソース: `ask/index.html`、`ask-server/ask_proxy.py`、`ask-server/nginx-draw-pad.conf`
+対象: `https://ym86.github.io/kids-ask-pad/` またはローカル起動 `http://localhost:8787/ask/`
+ソース: `index.html`、`server.py`
 
 ---
 
@@ -359,20 +359,20 @@ LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
 `qa-*.jsonl` のフィールド
 
 ```json
-{"ts":"2026-11-12T12:36:00+09:00","ip":"192.168.0.20","mode":"kid",
+{"ts":"2026-11-12T12:36:00+09:00","ip":"127.0.0.1","mode":"kid",
  "category":"ok","q":"…","query":"…","a":"…","verdict":"supported",
  "notice":null,"sources":["mext.go.jp"],"cost":0.008894,"tokens":4173,
  "status":200,"ms":8612}
 ```
 
 - 記録は応答を返す直前に行う（失敗リクエストも残る）。
-- パーミッションは 700/600（`root:draw-pad-ai`）。バックアップ対象。
+- パーミッションは 700/600。バックアップ対象。
 
 ---
 
 ## 9. セキュリティ
 
-- nginx: `allow 127.0.0.1; allow 192.168.0.0/24; deny all;`。
+- ネットワーク制限: ローカル起動時は 127.0.0.1 または信頼されたローカルNWのみ許可。
 - メソッド制限: `/ask/api/usage` は GET のみ、`/ask/api/*` は POST のみ。
 - CSP: `default-src 'none'`。`script-src` は **7 ページ分の SHA-256 ハッシュ**のみ。
   `connect-src 'self'`、`style-src 'unsafe-inline'`、`img-src` はページ別、

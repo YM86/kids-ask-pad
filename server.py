@@ -1019,8 +1019,8 @@ def openrouter(model, messages, max_tokens, temperature, plugins=None, timeout=4
             headers={
                 "Authorization": "Bearer " + active_key,
                 "Content-Type": "application/json",
-                "HTTP-Referer": "http://192.168.0.4/ask/",
-                "X-Title": "chiisana-sousakushitsu-ask",
+                "HTTP-Referer": "https://github.com/YM86/kids-ask-pad",
+                "X-Title": "kids-ask-pad",
                 "Accept": "application/json",
             },
         )

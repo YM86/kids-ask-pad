@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://generativelanguage.googleapis.com https://openrouter.ai https://ja.wikipedia.org; img-src 'self' data: https:; font-src 'self'; base-uri 'none'; form-action 'none';">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -897,6 +900,15 @@
   <script>
     (() => {
       "use strict";
+
+      // クリックジャッキング防止（他サイトでのiframe埋め込み実行を遮断）
+      if (window.top !== window.self) {
+        try {
+          window.top.location = window.self.location;
+        } catch (_) {
+          document.documentElement.style.display = "none";
+        }
+      }
 
       const MAX = 120;
       const form = document.getElementById("ask-form");
