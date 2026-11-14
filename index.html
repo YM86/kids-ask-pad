@@ -2835,25 +2835,33 @@
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 100000);
         try {
-          let handledByServer = false;
-          try {
-            const res = await fetch("/ask/api/ask", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ question, mode, force_search: Boolean(forceSearch) }),
-              signal: controller.signal
-            });
-            handledByServer = true;
-            let data = {};
-            try { data = await res.json(); } catch (_) { data = {}; }
-            if (!res.ok) {
-              showError(data.message || "ごめんね。いま こたえられなかったよ。すこし まって、もう いちど きいてね。");
-              return;
+          const isStaticHost = location.protocol === "file:" || location.hostname.endsWith("github.io") || location.hostname.endsWith("pages.dev");
+          let dataFromServer = null;
+          if (!isStaticHost) {
+            try {
+              const res = await fetch("/ask/api/ask", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ question, mode, force_search: Boolean(forceSearch) }),
+                signal: controller.signal
+              });
+              if (res.ok) {
+                dataFromServer = await res.json();
+              } else if (res.status === 400 || res.status === 429) {
+                let data = {};
+                try { data = await res.json(); } catch (_) { data = {}; }
+                if (data && (data.error || data.message)) {
+                  showError(data.message || "ごめんね。いま こたえられなかったよ。すこし まって、もう いちど きいてね。");
+                  return;
+                }
+              }
+            } catch (srvErr) {
+              if (srvErr && srvErr.name === "AbortError") throw srvErr;
             }
-            showAnswer(data);
+          }
+          if (dataFromServer) {
+            showAnswer(dataFromServer);
             return;
-          } catch (srvErr) {
-            if (handledByServer || (srvErr && srvErr.name === "AbortError")) throw srvErr;
           }
           const localCfg = readLocalConfig();
           const directData = (localCfg.provider === "google")
@@ -3086,57 +3094,61 @@
         cfgMsg.textContent = "";
         pwMsg.textContent = "";
         adminLoginMsg.textContent = "";
-        try {
-          const headers = { "Accept": "application/json" };
-          if (adminToken) headers["X-Admin-Token"] = adminToken;
-          const res = await fetch("/ask/api/admin/state?limit=50", { headers });
-          if (!res.ok) return;
-          const data = await res.json();
-          if (data.locked) {
-            adminLock.hidden = false;
-            adminBody.hidden = true;
-            adminLoginPw.focus();
-            return;
-          }
-          adminLock.hidden = true;
-          adminBody.hidden = false;
-          applyAdminConfig(data.config);
-          renderLogs(data.logs);
-          if (data.usage) setUsage({ today: (data.usage.tokens || {}).total || 0, total: null }, data.usage);
-        } catch (_) {
-          const localCfg = readLocalConfig();
-          if (localCfg.password && adminToken !== "local-unlocked") {
-            adminLock.hidden = false;
-            adminBody.hidden = true;
-            return;
-          }
-          adminLock.hidden = true;
-          adminBody.hidden = false;
-          const prov = localCfg.provider || "google";
-          applyAdminConfig({
-            provider: prov,
-            answer_model: localCfg.answer_model,
-            verify_model: localCfg.verify_model,
-            google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
-            google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
-            openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
-            openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
-            kid_sentences: localCfg.kid_sentences,
-            kid_chars: localCfg.kid_chars,
-            teen_sentences: localCfg.teen_sentences,
-            teen_chars: localCfg.teen_chars,
-            has_google_key: Boolean(localCfg.google_api_key),
-            google_key_masked: maskKey(localCfg.google_api_key),
-            has_openrouter_key: Boolean(localCfg.openrouter_api_key),
-            openrouter_key_masked: maskKey(localCfg.openrouter_api_key),
-            has_api_key: prov === "google" ? Boolean(localCfg.google_api_key) : Boolean(localCfg.openrouter_api_key),
-            api_key_masked: maskKey(prov === "google" ? localCfg.google_api_key : localCfg.openrouter_api_key),
-            has_password: Boolean(localCfg.password),
-            catalogs: DEFAULT_CATALOGS,
-            catalog: prov === "google" ? DEFAULT_CATALOG_GOOGLE : DEFAULT_CATALOG_OPENROUTER
-          });
-          renderLogs(readLocalLogs());
+        const isStaticHost = location.protocol === "file:" || location.hostname.endsWith("github.io") || location.hostname.endsWith("pages.dev");
+        if (!isStaticHost) {
+          try {
+            const headers = { "Accept": "application/json" };
+            if (adminToken) headers["X-Admin-Token"] = adminToken;
+            const res = await fetch("/ask/api/admin/state?limit=50", { headers });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.locked) {
+                adminLock.hidden = false;
+                adminBody.hidden = true;
+                adminLoginPw.focus();
+                return;
+              }
+              adminLock.hidden = true;
+              adminBody.hidden = false;
+              applyAdminConfig(data.config);
+              renderLogs(data.logs);
+              if (data.usage) setUsage({ today: (data.usage.tokens || {}).total || 0, total: null }, data.usage);
+              return;
+            }
+          } catch (_) {}
         }
+        const localCfg = readLocalConfig();
+        if (localCfg.password && adminToken !== "local-unlocked") {
+          adminLock.hidden = false;
+          adminBody.hidden = true;
+          return;
+        }
+        adminLock.hidden = true;
+        adminBody.hidden = false;
+        const prov = localCfg.provider || "google";
+        applyAdminConfig({
+          provider: prov,
+          answer_model: localCfg.answer_model,
+          verify_model: localCfg.verify_model,
+          google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
+          google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
+          openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
+          openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
+          kid_sentences: localCfg.kid_sentences,
+          kid_chars: localCfg.kid_chars,
+          teen_sentences: localCfg.teen_sentences,
+          teen_chars: localCfg.teen_chars,
+          has_google_key: Boolean(localCfg.google_api_key),
+          google_key_masked: maskKey(localCfg.google_api_key),
+          has_openrouter_key: Boolean(localCfg.openrouter_api_key),
+          openrouter_key_masked: maskKey(localCfg.openrouter_api_key),
+          has_api_key: prov === "google" ? Boolean(localCfg.google_api_key) : Boolean(localCfg.openrouter_api_key),
+          api_key_masked: maskKey(prov === "google" ? localCfg.google_api_key : localCfg.openrouter_api_key),
+          has_password: Boolean(localCfg.password),
+          catalogs: DEFAULT_CATALOGS,
+          catalog: prov === "google" ? DEFAULT_CATALOG_GOOGLE : DEFAULT_CATALOG_OPENROUTER
+        });
+        renderLogs(readLocalLogs());
       }
 
       adminToggle.addEventListener("click", () => {
@@ -3156,32 +3168,40 @@
 
       adminLoginBtn.addEventListener("click", async () => {
         adminLoginMsg.textContent = "";
-        try {
-          const res = await fetch("/ask/api/admin/auth", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password: adminLoginPw.value })
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            adminLoginMsg.textContent = data.message || "パスワードが ちがいます。";
-            return;
-          }
-          adminToken = data.token || "";
+        const pw = adminLoginPw.value;
+        if (!pw) return;
+        const isStaticHost = location.protocol === "file:" || location.hostname.endsWith("github.io") || location.hostname.endsWith("pages.dev");
+        if (!isStaticHost) {
+          try {
+            const res = await fetch("/ask/api/admin/auth", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ password: pw })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              adminToken = data.token || "";
+              adminLoginPw.value = "";
+              adminLock.hidden = true;
+              adminBody.hidden = false;
+              applyAdminConfig(data.config);
+              renderLogs(data.logs);
+              return;
+            } else if (res.status === 401 || res.status === 403) {
+              let data = {};
+              try { data = await res.json(); } catch (_) { data = {}; }
+              adminLoginMsg.textContent = data.message || "パスワードが ちがいます。";
+              return;
+            }
+          } catch (_) {}
+        }
+        const localCfg = readLocalConfig();
+        if (!localCfg.password || pw === localCfg.password) {
+          adminToken = "local-unlocked";
           adminLoginPw.value = "";
-          adminLock.hidden = true;
-          adminBody.hidden = false;
-          applyAdminConfig(data.config);
-          renderLogs(data.logs);
-        } catch (_) {
-          const localCfg = readLocalConfig();
-          if (adminLoginPw.value === localCfg.password) {
-            adminToken = "local-unlocked";
-            adminLoginPw.value = "";
-            loadAdminState();
-          } else {
-            adminLoginMsg.textContent = "パスワードが ちがいます。";
-          }
+          loadAdminState();
+        } else {
+          adminLoginMsg.textContent = "パスワードが ちがいます。";
         }
       });
 
@@ -3209,49 +3229,57 @@
           if (newKey) payload.openrouter_api_key = newKey;
         }
         writeLocalConfig(payload);
-        try {
-          const headers = { "Content-Type": "application/json" };
-          if (adminToken) headers["X-Admin-Token"] = adminToken;
-          const res = await fetch("/ask/api/admin/config", {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payload)
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            cfgMsg.className = "admin-msg err";
-            cfgMsg.textContent = data.message || "保存できませんでした。";
-            return;
-          }
-          applyAdminConfig(data.config);
-          cfgMsg.textContent = "設定を ローカルに 保存しました。";
-        } catch (_) {
-          const localCfg = readLocalConfig();
-          const prov = localCfg.provider || "google";
-          applyAdminConfig({
-            provider: prov,
-            answer_model: localCfg.answer_model,
-            verify_model: localCfg.verify_model,
-            google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
-            google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
-            openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
-            openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
-            kid_sentences: localCfg.kid_sentences,
-            kid_chars: localCfg.kid_chars,
-            teen_sentences: localCfg.teen_sentences,
-            teen_chars: localCfg.teen_chars,
-            has_google_key: Boolean(localCfg.google_api_key),
-            google_key_masked: maskKey(localCfg.google_api_key),
-            has_openrouter_key: Boolean(localCfg.openrouter_api_key),
-            openrouter_key_masked: maskKey(localCfg.openrouter_api_key),
-            has_api_key: prov === "google" ? Boolean(localCfg.google_api_key) : Boolean(localCfg.openrouter_api_key),
-            api_key_masked: maskKey(prov === "google" ? localCfg.google_api_key : localCfg.openrouter_api_key),
-            has_password: Boolean(localCfg.password),
-            catalogs: DEFAULT_CATALOGS,
-            catalog: prov === "google" ? DEFAULT_CATALOG_GOOGLE : DEFAULT_CATALOG_OPENROUTER
-          });
-          cfgMsg.textContent = "設定を ブラウザーに 保存しました。";
+        const isStaticHost = location.protocol === "file:" || location.hostname.endsWith("github.io") || location.hostname.endsWith("pages.dev");
+        if (!isStaticHost) {
+          try {
+            const headers = { "Content-Type": "application/json" };
+            if (adminToken) headers["X-Admin-Token"] = adminToken;
+            const res = await fetch("/ask/api/admin/config", {
+              method: "POST",
+              headers,
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              applyAdminConfig(data.config);
+              cfgMsg.className = "admin-msg ok";
+              cfgMsg.textContent = "設定を 保存しました。";
+              return;
+            } else if (res.status === 400 || res.status === 401 || res.status === 403) {
+              let data = {};
+              try { data = await res.json(); } catch (_) { data = {}; }
+              cfgMsg.className = "admin-msg err";
+              cfgMsg.textContent = data.message || "保存できませんでした。";
+              return;
+            }
+          } catch (_) {}
         }
+        const localCfg = readLocalConfig();
+        const prov = localCfg.provider || "google";
+        applyAdminConfig({
+          provider: prov,
+          answer_model: localCfg.answer_model,
+          verify_model: localCfg.verify_model,
+          google_answer_model: localCfg.google_answer_model || "gemini-flash-lite-latest",
+          google_verify_model: localCfg.google_verify_model || "gemini-flash-lite-latest",
+          openrouter_answer_model: localCfg.openrouter_answer_model || "z-ai/glm-5.3-flash",
+          openrouter_verify_model: localCfg.openrouter_verify_model || "openai/gpt-6-luna",
+          kid_sentences: localCfg.kid_sentences,
+          kid_chars: localCfg.kid_chars,
+          teen_sentences: localCfg.teen_sentences,
+          teen_chars: localCfg.teen_chars,
+          has_google_key: Boolean(localCfg.google_api_key),
+          google_key_masked: maskKey(localCfg.google_api_key),
+          has_openrouter_key: Boolean(localCfg.openrouter_api_key),
+          openrouter_key_masked: maskKey(localCfg.openrouter_api_key),
+          has_api_key: prov === "google" ? Boolean(localCfg.google_api_key) : Boolean(localCfg.openrouter_api_key),
+          api_key_masked: maskKey(prov === "google" ? localCfg.google_api_key : localCfg.openrouter_api_key),
+          has_password: Boolean(localCfg.password),
+          catalogs: DEFAULT_CATALOGS,
+          catalog: prov === "google" ? DEFAULT_CATALOG_GOOGLE : DEFAULT_CATALOG_OPENROUTER
+        });
+        cfgMsg.className = "admin-msg ok";
+        cfgMsg.textContent = "設定を ブラウザーに 保存しました。";
       });
 
       pwSaveBtn.addEventListener("click", async () => {
