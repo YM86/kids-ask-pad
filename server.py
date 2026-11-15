@@ -1961,6 +1961,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_file("index.html")
         if path in ("/tests", "/tests/index.html"):
             return self._serve_file(os.path.join("tests", "index.html"))
+        if path in ("/questions.js", "/ask/questions.js"):
+            return self._serve_file("questions.js", content_type="application/javascript; charset=utf-8")
         if path == "/ask/api/health":
             return self._json(200, {"ok": True, "spend": read_spend()})
         if path == "/ask/api/usage":

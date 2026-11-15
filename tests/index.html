@@ -65,10 +65,14 @@
       try {
         const res = await fetch("../index.html");
         const html = await res.text();
-        record("index.html 読み込み", html.length > 50000, html.length + " chars");
+        record("index.html 読み込み", html.length > 15000, html.length + " chars");
 
-        const qMatch = html.match(/const QUESTIONS = \[([\s\S]*?)\];/);
-        const tMatch = html.match(/const TEEN_QUESTIONS = \[([\s\S]*?)\];/);
+        const resQ = await fetch("../questions.js");
+        const js = await resQ.text();
+        record("questions.js 読み込み", js.length > 40000, js.length + " chars");
+
+        const qMatch = js.match(/const QUESTIONS = \[([\s\S]*?)\];/);
+        const tMatch = js.match(/const TEEN_QUESTIONS = \[([\s\S]*?)\];/);
         const extract = (block) => (block.match(/^\s*"([^"]+)",/gm) || []).map((s) => s.trim().slice(1, -2));
 
         const qList = qMatch ? extract(qMatch[1]) : [];
@@ -85,12 +89,13 @@
         const kanjiInKid = qList.filter((q) => /[\u4e00-\u9fff]/.test(q));
         record("こども向けプールに漢字混入なし", kanjiInKid.length === 0, "kanji=" + kanjiInKid.length);
 
+        record("questions.js 読み込みスクリプトタグ存在", html.includes('<script src="questions.js"></script>'));
         record("管理者パネル・APIキー入力欄の存在", html.includes('id="cfg-api-key"') && html.includes('id="admin-panel"'));
         record("音声入力マイクボタンの存在", html.includes('id="mic-btn"'));
         record("関連質問チップ表示領域の存在", html.includes('id="related-block"') && html.includes('id="related-chips"'));
         record("プロンプトインジェクション検査正規表現の存在", html.includes("LOCAL_INJECTION_RE"));
       } catch (err) {
-        record("index.html 検証実行", false, String(err));
+        record("検証テスト実行", false, String(err));
       }
 
       summaryEl.textContent = "合計: " + (passed + failed) + " 件 / 成功: " + passed + " 件 / 失敗: " + failed + " 件";

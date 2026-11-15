@@ -152,11 +152,11 @@
 - 小学校高学年・中学校の学習内容 100
 - 応用・現代社会の疑問 100（数学情報・物理化学・生体医学・地球環境・地理歴史・政治経済・文化芸術）
 
-### 3.2 制約と分離計画
+### 3.2 構成とファイル分離
 
 - 同一プール内・プール間とも重複させない。
-- 現状は `index.html` 内に静的配列として内蔵（約 87 KB）。
-- ※今後の改訂において、`file://` 起動でも CORS エラーを起こさず読み込めるよう、`<script src="questions.js">` 形式での外部ファイル分離を予定。
+- 質問プールは `questions.js`（静的 JS ファイル、約 53 KB）として分離されており、`index.html` から `<script src="questions.js"></script>` で読み込まれる。
+- **`file://` 互換性**: ブラウザーで `index.html` を直接開く場合（方式A）でも、`fetch` の CORS 制約を受けずにマウント可能。`window.QUESTIONS` / `window.TEEN_QUESTIONS` に展開される。
 
 ---
 
@@ -182,6 +182,7 @@
 ローカルで `server.py` を動かす場合の HTTP エンドポイント（待ち受け既定: `127.0.0.1:8787`）。
 
 - `GET /` / `/index.html` / `/ask` / `/ask/index.html`: Web 画面配信
+- `GET /questions.js` / `/ask/questions.js`: 質問プールスクリプト配信
 - `GET /tests` / `/tests/index.html`: 検証テスト画面配信
 - `GET /ask/api/health`: 稼働確認 `{"ok": true, "spend": ...}`
 - `GET /ask/api/usage`: 当日の累計使用量・概算費用
@@ -364,27 +365,29 @@ flowchart TD
    ```
    ブラウザーで `http://127.0.0.1:8787/` を開いて動作確認。
 2. **静的検証・テスト**:
-   - Python 構文チェック:
+   - 総合検証スクリプト（Python 構文、質問プール整合性、HTML/CSP/DOM 検証）:
      ```powershell
-     python -m py_compile server.py
+     python tests/test_verify.py
      ```
    - ブラウザー内自動検証テスト:
      ブラウザーで `tests/index.html`（または `http://127.0.0.1:8787/tests/`）を開き、質問プール件数・重複・ルビ・管理パネルの存在などの自動テスト（全項目 PASS）を確認。
+   - GitHub Actions CI:
+     `main` ブランチへの push / PR 時に `.github/workflows/ci.yml` が自動実行され、リグレッションを防止。
 
 ### 11.2 リリース手順（GitHub Pages）
 
 1. 変更ファイルをステージング・コミット:
    ```powershell
-   git add index.html server.py docs/SPEC.md
+   git add index.html questions.js server.py docs/SPEC.md tests/
    git commit -m "feat/fix: ..."
    ```
 2. `main` ブランチへプッシュ:
    ```powershell
    git push origin main
    ```
-3. GitHub Actions のデプロイ完了を確認:
+3. GitHub Actions の CI 検証および Pages デプロイ完了を確認:
    ```powershell
-   gh run list --repo YM86/kids-ask-pad --limit 1
+   gh run list --repo YM86/kids-ask-pad --limit 2
    ```
 4. 公開環境（`https://ym86.github.io/kids-ask-pad/`）で表示と動作を確認。
 
@@ -396,10 +399,11 @@ flowchart TD
    - Web Speech API のマイク機能は、ブラウザーの仕様上セキュアコンテキスト（HTTPS または `localhost`）が必須。
    - GitHub Pages（`https://...`）やローカル起動（`http://localhost:8787/`）では問題なく動作する。
    - 家庭内 LAN の平文 HTTP（例: `http://192.168.x.x:8787/`）で iPad 等からアクセスした場合、ブラウザーがマイク API をブロックするためボタンが自動非表示となる。LAN 内で音声入力を使う場合は、リバースプロキシで HTTPS 化（オレオレ証明書またはローカル CA）するか、GitHub Pages 経由で利用する。
-2. **質問プールの外部ファイル分離（計画中）**:
-   - 現在、800 問の質問プール（約 87 KB）が `index.html` に直接埋め込まれている。
-   - 今後の改訂で、`file://` 起動でも CORS 制限を受けないよう、`<script src="questions.js"></script>` 形式の外部 JS ファイルとして分離し、本体 HTML の軽量化と差分管理の容易化を図る。
-3. **最小限の CI 自動テスト導入（計画中）**:
-   - `.github/workflows/` に Python の構文チェック（`py_compile`）およびプールの整合性チェックを組み込み、PR/push 時の自動回帰テストを導入する。
+2. **質問プールの外部ファイル分離（完了）**:
+   - 800 問の質問プール（約 53 KB）を `questions.js` として分離済み。
+   - `file://` 起動でも CORS 制限を受けないよう、`<script src="questions.js"></script>` 形式の外部 JS ファイルとして読み込み。本体 HTML の大幅軽量化（177KB → 約90KB）と差分管理の容易化を達成。
+3. **CI 自動テスト導入（完了）**:
+   - `.github/workflows/ci.yml` および `tests/test_verify.py` を配備。push / PR 時に Python 構文チェック、質問プール整合性、セキュリティタグの自動回帰テストを実施。
 4. **読み上げのプラットフォーム差**:
+   - iOS Safari 等の一部モバイルブラウザーでは、ユーザー操作（タップ）を契機としない自動読み上げが制限される場合がある（その場合は「よみあげ」ボタンの手動タップで再生可能）。
    - iOS Safari 等の一部モバイルブラウザーでは、ユーザー操作（タップ）を契機としない自動読み上げが制限される場合がある（その場合は「よみあげ」ボタンの手動タップで再生可能）。
