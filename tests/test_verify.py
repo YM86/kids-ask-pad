@@ -83,9 +83,29 @@ def test_server_routes():
     print("[PASS] server.py routing check")
 
 
+def test_sentence_termination():
+    """Verify sentence termination and incomplete sentence clipping."""
+    sys.path.insert(0, BASE_DIR)
+    import server
+
+    # Test 1: Complete sentences + incomplete trailing fragment -> incomplete fragment must be dropped
+    sample = "そらは 青(あお)いよ。たいようの 光(ひかり)が ちきゅうに 当(あ)たるからだよ。そして"
+    result = server.sentences(sample, limit=4, max_chars=420)
+    assert not result.endswith("そして"), f"Trailing incomplete sentence was not dropped: {result}"
+    assert result.endswith("。") or result.endswith("！") or result.endswith("？"), f"Result does not end with terminal punctuation: {result}"
+
+    # Test 2: Verify index.html contains proper terminal punctuation checking
+    html_path = os.path.join(BASE_DIR, "index.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    assert "/[。．!?！?]$/.test(trimmed)" in html, "index.html missing sentence terminal punctuation test"
+
+    print("[PASS] sentence termination & incomplete fragment dropping check")
+
+
 def main():
     print("Running kids-ask-pad verification tests...")
-    tests = [test_server_syntax, test_questions_pool, test_index_html, test_server_routes]
+    tests = [test_server_syntax, test_questions_pool, test_index_html, test_server_routes, test_sentence_termination]
     failed = 0
     for t in tests:
         try:

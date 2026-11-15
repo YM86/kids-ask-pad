@@ -106,8 +106,8 @@ PER_QUESTION_EST = float(os.environ.get("ASK_PER_QUESTION_EST", "0.0085"))
 
 # モードごとの 答えの 既定上限（文数、文字数）と 生成トークン
 DEFAULT_MODE_LIMITS = {
-    "kid": {"sentences": 4, "chars": 420, "max_tokens": 800, "clean": 600},
-    "teen": {"sentences": 6, "chars": 600, "max_tokens": 1100, "clean": 800},
+    "kid": {"sentences": 4, "chars": 420, "max_tokens": 1800, "clean": 1400},
+    "teen": {"sentences": 6, "chars": 600, "max_tokens": 2400, "clean": 2000},
 }
 
 
@@ -122,6 +122,7 @@ def build_answer_prompt(mode, sentences_max):
             "  熟語は まとめて書く。二(に)酸(さん)化(か)炭(たん)素(そ) ではなく 二酸化炭素(にさんかたんそ) のように。\n\n"
             "【文体・内容のルール】\n"
             "- %d文以内で、理由やしくみを 順序立てて 説明する。だらだら 長くしない。\n"
+            "- 途中で文章を絶対に途切れさせず、最後の文まで必ず「。」で完結させること。\n"
             "- 話しことばの「〜だよ」ではなく、「〜です・ます」の説明文で書く。\n"
             "- かっこ書きは 読みがなだけに つかう。ことばの いいかえを かっこに 入れない。\n"
             "- むずかしい ことばは つかってよいが、初めて 出てきた ことばは 短く いいかえる。\n"
@@ -147,6 +148,7 @@ def build_answer_prompt(mode, sentences_max):
         "- ひらがなを 多めにし、難しい言葉は使わない。\n\n"
         "【文体・内容のルール】\n"
         "- %d文以内で答える。理由を 1つ入れる。\n"
+        "- 途中で文章を絶対に途切れさせず、最後の文まで必ず「。」で完結させること。\n"
         "- 「です・ます」ではなく、「〜だよ」「〜だね」の やさしい いいかたで 話す。\n"
         "- こたえの ねもとは、こうきょう きかんや 大学の しらべものを できるだけ つかう。\n"
         "- URL・リンク・サイト名・Markdown・記号での かざりつけは 書かない。\n"
@@ -495,15 +497,15 @@ def get_mode_limits(mode, cfg=None):
         return {
             "sentences": cfg["teen_sentences"],
             "chars": chars,
-            "max_tokens": max(900, min(1600, int(chars * 1.8) + 200)),
-            "clean": max(600, chars + 200),
+            "max_tokens": max(1800, min(3200, int(chars * 3.5))),
+            "clean": max(1800, chars * 3),
         }
     chars = cfg["kid_chars"]
     return {
         "sentences": cfg["kid_sentences"],
         "chars": chars,
-        "max_tokens": max(600, min(1400, int(chars * 1.8) + 150)),
-        "clean": max(450, chars + 180),
+        "max_tokens": max(1400, min(2600, int(chars * 3.5))),
+        "clean": max(1400, chars * 3),
     }
 
 
@@ -1639,9 +1641,9 @@ def fill_missing_ruby(text, mode="kid", cfg=None):
         {"role": "user", "content": text},
     ]
     try:
-        data = ai_chat(model, messages, 1200, 0.0, None, timeout=14, reasoning={"enabled": False}, cfg=cfg)
+        data = ai_chat(model, messages, 1800, 0.0, None, timeout=14, reasoning={"enabled": False}, cfg=cfg)
         msg = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        cleaned = clean_text(msg)
+        cleaned = clean_text(msg, limit=2000)
         cleaned_norm = clean_and_normalize_ruby(cleaned)
         if cleaned_norm and len(find_unannotated_kanji(cleaned_norm)) < len(unannotated):
             return cleaned_norm
@@ -1650,7 +1652,7 @@ def fill_missing_ruby(text, mode="kid", cfg=None):
     return text
 
 
-def clean_text(text, limit=600):
+def clean_text(text, limit=1600):
     text = unicodedata.normalize("NFKC", str(text or ""))
     text = TAG_RE.sub("", text)
     text = MD_LINK_RE.sub(r"\1", text)
@@ -1674,23 +1676,29 @@ def sentences(text, limit=4, max_chars=420):
     """文単位で切り詰める。途中で切れた文は捨てる。"""
     parts = re.findall(r"[^。．!?！?\n]+[。．!?！?]?", text)
     out = []
-    total = 0
+    total_plain = 0
     for part in parts:
         part = part.strip()
         if not part:
             continue
         if not re.search(r"[。．!?！?]$", part):
             continue  # 言い切っていない文は使わない
-        if total + len(part) > max_chars:
+        # 文字数判定はふりがな（よみ）を除いた実可読文字数で行う
+        plain_len = len(re.sub(r"[（(][^）)]*[）)]", "", part))
+        if total_plain + plain_len > max_chars and out:
             break
         out.append(part)
-        total += len(part)
+        total_plain += plain_len
         if len(out) >= limit:
             break
     if out:
         return "".join(out)
-    # 句点がない場合は素直に切る
-    return text[:max_chars].rstrip("、, ")
+    # 句点が1つも無い場合の安全処理（最後の句点を探すか、末尾を「。」で閉じる）
+    m = re.search(r"^(.*[。．!?！?])", text[:max_chars * 2])
+    if m:
+        return m.group(1).strip()
+    clean = text[:max_chars].rstrip("、,， \t\r\n")
+    return (clean + "。") if clean else ""
 
 
 # ---------------------------------------------------------------- 問い合わせ処理
@@ -1830,6 +1838,9 @@ def handle_question(question, mode="kid", force_search=False):
         ruby_fixed = fill_missing_ruby(answer, mode, cfg)
         if ruby_fixed:
             answer = clean_and_normalize_ruby(ruby_fixed)
+
+    # 最終回答が必ず句点で完結し、途中で切れた文がないことを保証する
+    answer = sentences(answer, limits["sentences"], limits["chars"])
 
     guard = safety_check(answer, category, cfg)
     cost += guard.get("cost", 0.0)
