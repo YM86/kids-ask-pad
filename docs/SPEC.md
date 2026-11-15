@@ -1,23 +1,38 @@
 # 「しつもんしてね」仕様書
 
-最終更新: 2026-11-12（第3版）
-対象: `https://ym86.github.io/kids-ask-pad/` またはローカル起動 `http://localhost:8787/ask/`
+最終更新: 2026-11-15（第4版: スタンドアロン/GitHub Pages公開・デュアル実行対応）
+対象:
+- 方式A（完全クライアント動作）: `https://ym86.github.io/kids-ask-pad/` または `file://.../index.html`
+- 方式B（ローカルサーバー動作）: `http://localhost:8787/` または `http://127.0.0.1:8787/`（`server.py`）
 ソース: `index.html`、`server.py`
 
 ---
 
 ## 1. 目的と範囲
 
-家庭内 LAN の iPad から、子ども（幼児〜小学生）と中学生が「なぜ？」を
-1 問ずつ質問し、Web の公的資料で裏づけを取った答えを読むためのツール。
+子ども（幼児〜小学生）と中学生が「なぜ？」を 1 問ずつ質問し、Web の公的資料や信頼できる知識で裏づけを取った答えを読むための Web ツール。
 
-- 画面は **1 問 1 答**。新しい質問をすると前の答えは消える。
-- ブラウザーには履歴を残さない（`localStorage` / `IndexedDB` / Cookie を使わない）。
-- 質問と答えは **サーバー側にのみ** 全件記録する。
-- API キーはブラウザーへ渡さない。ブラウザーが触れるのは同一オリジンの `/ask/api/` だけ。
+### 1.1 実行形態（デュアル構成）
 
-範囲外: 音声入力（`getUserMedia` は HTTPS 必須のため未実装）、複数ターンの会話、
-ログイン、外部公開。
+1. **方式A：完全クライアント動作（GitHub Pages / `file://` 直接起動）**
+   - サーバー不要。HTML ファイルをブラウザーで開くだけで全機能が動作する。
+   - API キー（Google AI Studio または OpenRouter）はブラウザーの `localStorage`（キー: `kids_ask_pad_config_v1`）にのみ安全に保存。
+   - ブラウザーから各 AI サービス公式エンドポイントへ直接 HTTPS 通信を行う（中間サーバーなし）。
+   - 質問履歴や当日のトークン使用量もブラウザーの `localStorage`（キー: `kids_ask_pad_logs_v1`, `kids_ask_pad_usage_v1`）にのみ保存され、外部送信されない。
+2. **方式B：ローカルサーバー動作（`server.py`）**
+   - Python 3 標準ライブラリのみで起動（追加ライブラリ不要）。
+   - API キーや設定はサーバー側ローカルファイル `data/config.json`（パーミッション 600、`.gitignore` 対象）に保存。
+   - 質問ログは `data/qa/qa-YYYY-MM-DD.jsonl` に保存され、ブラウザー側にはキーやログを残さない。
+
+### 1.2 画面と機能方針
+
+- **1 問 1 答**: 画面は常に 1 問 1 答。新しい質問をすると直前の答えは消え、文脈を引きずらない。
+- **音声機能**:
+  - **読み上げ（`speechSynthesis`）**: ブラウザー標準の Web Speech API で全環境（HTTPS / HTTP / `file://`）において動作。
+  - **音声入力（`SpeechRecognition`）**: Web Speech API の音声認識により、文字入力が苦手な幼児でもマイクから質問可能。**セキュアコンテキスト（HTTPS または localhost）必須**。GitHub Pages（HTTPS）やローカルサーバー（`localhost` / `127.0.0.1`）では利用可能。平文 LAN HTTP（例: `http://192.168.x.x`）ではブラウザーのセキュリティ仕様によりマイクが使えず、ボタンが自動非表示となる。
+- **範囲外**:
+  - 複数ターンの会話（チャット化による話題逸脱や誤認を防ぐため意図的に 1 問 1 答に限定）。
+  - クラウド上の中央アカウント管理・ログイン（各家庭・各ブラウザーまたは各ローカル環境で完結）。
 
 ---
 
@@ -25,108 +40,94 @@
 
 ### 2.1 構成（上から順）
 
-| 要素 | id | 内容 |
+| 要素 | id / selector | 内容 |
 | --- | --- | --- |
-| 戻るボタン | — | `← どうぐいちらん`（44px の丸ボタン、`/` へ） |
-| 見出し | — | `？ しつもんしてね` |
-| 使用量バー | `usage` | `きょうの トークン` / `きょうの 費用` / `のこり N 回` / `この しつもん` |
-| 質問カード | `ask-form` | モード切替、きょうの なぜ？（`daily`）、入力欄、`おしえて！`、`けす`、文字数カウンター |
+| 使用量バー | `usage` | `きょうの トークン` / `きょうの 費用` / `のこり N 回` / `この しつもん` / `⚙️ 設定` ボタン |
+| 見出し | — | `？ しつもんしてね`、`しりたいことを、おしえてね`、リード文 |
+| 質問カード | `ask-form` | モード切替、きょうの なぜ？（`daily`）、質問入力欄（`textarea`）、`おしえて！`（`send`）、`こえで きく`（`mic-btn`）、文字数カウンター |
 | 分野タブ | `cats` | モード別の分野切り替えタブ（`すべて`＋5〜6分野） |
 | 質問例 | `chips` | 選択中の分野から 5 問のチップ＋`ほかの しつもんを みる` |
 | 進行表示 | `thinking` | `しらべているよ…`（`aria-live="polite"`） |
-| 答え | `answer` | 本文（`answer-text`）、注意書き（`notice`）、クリック可能な出典リンク（`sources`）、`よみあげ`、`もういちど` |
+| 答え | `answer` | 本文（`answer-text`、ふりがな付き）、注意書き（`notice`）、出典リンク / 基本知識ラベル（`sources`）、`よみあげ`、`もういちど`、関連質問ブロック（`related-block`） |
 | エラー | `error` | `role="alert"`。通信失敗・上限・混雑をやわらかく表示 |
 | 管理者画面ボタン | `admin-toggle` | ページ最下部の `おうちの ひとへ（管理・ログ）` |
-| 管理者パネル | `admin-panel` | モデル選択、表示する文の長さ（文数・字数）、パスワード設定、検索ログ一覧（日時・質問・回答・消費トークン） |
+| 管理者パネル | `admin-panel` | プロバイダー選択（Google AI Studio / OpenRouter）、API キー入力、モデル選択、文数・文字数制限、検索ログ一覧、パスワード設定 |
 
 ### 2.2 モード
 
 | | こども向け（`kid`） | 中学生向け（`teen`） |
 | --- | --- | --- |
 | 対象 | 幼児〜小学生 | 中学生 |
-| 文数・字数 | 4 文 / 420 字 | 6 文 / 600 字 |
-| 文体 | ひらがな多め、`〜だよ` | `〜です・ます` の説明文 |
-| ふりがな | あり | あり（`rt` は 0.42em） |
+| 文数・字数 | 4 文 / 420 字以内（既定） | 6 文 / 600 字以内（既定） |
+| 文体 | ひらがな多め、やさしい話し言葉（`〜だよ`） | 順序立てた説明文（`〜です・ます`） |
+| ふりがな | すべての漢字に必須（`<ruby>`） | 熟語・専門用語・時事用語等に付与 |
 | 生成トークン上限 | 800 | 1,100 |
 | 読み上げ | rate 0.88 / pitch 1.15 / 文間 220ms | rate 1.00 / pitch 1.00 / 文間 150ms |
 
-切り替えは `mode-kid` / `mode-teen` の 2 ボタン。`aria-pressed` と `body.teen` が連動し、
-質問例・文体・読み上げパラメータが同時に入れ替わる。切り替え時に答えと読み上げは破棄する。
+切り替えは `mode-kid` / `mode-teen` の 2 ボタン。`aria-pressed` と `body.teen` が連動し、質問例・文体・読み上げパラメータが同時に入れ替わる。
 
-### 2.3 「きょうの なぜ？」と分野別の質問例チップ
+### 2.3 「きょうの なぜ？」と分野別質問例チップ
 
 - **きょうの なぜ？（`daily`）**:
-  - モード切替のすぐ下に、その日の季節（春 3〜5月 / 夏 6〜8月 / 秋 9〜11月 / 冬 12〜2月）に合った質問を日付シード（`YYYYMMDD`）で 1 問ピックアップして表示する（`renderDaily`）。
-  - こども向けは `きょうの なぜ？`、中学生向けは `M月D日の なぜ？` のバッジを付け、押すとそのまま質問を送信する。
+  - その日の季節（春 3〜5月 / 夏 6〜8月 / 秋 9〜11月 / 冬 12〜2月）に合った質問を日付シード（`YYYYMMDD`）で 1 問ピックアップ（`renderDaily`）。
+  - こども向けは `きょうの なぜ？`、中学生向けは `M月D日の なぜ？` のバッジを付け、タップすると質問欄に入力して即時送信。
 - **分野タブ（`cats`）**:
   - こども向け: `すべて`（400） / `しぜん・うちゅう`（76） / `いきもの`（51） / `からだ・たべもの`（47） / `くらし・のりもの`（126） / `がっこうの まなび`（100）。
   - 中学生向け: `すべて`（400） / `物理・化学`（74） / `生物・人体`（50） / `地学・宇宙・環境`（74） / `数学・情報`（47） / `歴史・社会・経済`（125） / `ことば・芸術`（30）。
-  - タブを押すと `aria-pressed` が切り替わり、その分野のプールから 5 問を即座に選び直す（`renderCategories` → `renderChips`）。
+  - タブを押すと選択中の分野プールから 5 問を即座に選び直す。
 - **質問例チップ（`chips`）**:
   - 選択中の分野プールから **重複なしで 5 問** をランダムに選ぶ（`renderChips`）。
-  - 選び直す契機: ページを開いたとき / 分野タブを切り替えたとき / 「けす」/ 「ほかの しつもんを みる」。
   - チップを押すと入力欄へ転記し、そのまま送信する。
   - プール・分野定義・日替わり選出はすべてブラウザー内の静的処理のみ。サーバー呼び出しも費用も発生しない。
 
 ### 2.4 使用量表示
 
-- 起動時に `GET /ask/api/usage` を 1 回呼び、回答ごとにレスポンスの `estimate` で更新する。
-- `きょうの トークン`: 当日の合計トークン（カンマ区切り）。
-- `きょうの 費用`: `spend.json` の当日累計（USD、小数 2 桁）。
-- `のこり N 回`: `(ASK_DAILY_USD_MAX − 当日費用) ÷ 1 問あたり平均` の切り捨て。
-  平均は当日の実測（`tokens.json` の `cost` ÷ `measured`）。実測が無い日は `ASK_PER_QUESTION_EST`。
-- `この しつもん`: 直前の 1 問で使ったトークン。
-- 取得できない項目は `—`。
+- **方式A（クライアント直）**:
+  - ブラウザーの `localStorage`（`kids_ask_pad_usage_v1`）に記録された当日のトークン数・概算費用・残回数を表示。
+- **方式B（ローカルサーバー）**:
+  - 起動時に `GET /ask/api/usage` を呼び出し、回答ごとにレスポンスの `estimate` で更新。
+- 項目: `きょうの トークン` / `きょうの 費用`（USD 小数 2 桁、無料枠利用時は `$0.00`） / `のこり N 回` / `この しつもん`（直前 1 問のトークン数）。
 
 ### 2.5 読み上げ・音声入力（Web Speech API）
 
-外部サービスを使わない。ブラウザー標準の Web Speech API のみで動作する。
+外部有料サービスを使わず、ブラウザー標準の Web Speech API のみで動作。
 
 - **読み上げ（`speechSynthesis`）**:
-  - 話者: `lang` が `ja` の音声から `VOICE_PREFERENCE`
-    （`kyoko` → `o-ren` → `nanami` → `haruka` → `ayumi` → `sayaka` → `mizuki` → `google 日本語`）の順で選ぶ。
-    見つからなければ `ja` の先頭。`voiceschanged` で選び直す。
-  - 文分割: `SENTENCE_RE` で文に分け、`<span class="sent">` に入れる（ふりがなは各文の内側）。
-  - 読み上げは 1 文ずつ `SpeechSynthesisUtterance` を作り、`onend` の後 `文間` ms 待って次へ。
-  - 読み上げ中の文には `class="sent spoken"`（薄い緑の帯）。
-  - `speakingGen` の世代番号で、新しい質問・「けす」・モード切替時に古い発話を確実に破棄する。
-  - 読み上げ用文字列は `toSpeechText` で作る（`漢字(よみ)` → 漢字、かっこ書き除去、空白圧縮）。
+  - 話者: `lang` が `ja` の音声から優先順（`kyoko` → `o-ren` → `nanami` → `haruka` → `ayumi` → `sayaka` → `mizuki` → `google 日本語`）で選定。
+  - 文分割: `SENTENCE_RE` で文ごとに `<span class="sent">` に分割。
+  - 1 文ずつ `SpeechSynthesisUtterance` を再生し、読み上げ中の文には `class="sent spoken"`（薄い緑の帯）を付与。
+  - `speakingGen`（世代番号）により、新しい質問・「けす」・モード切替時に古い発話を確実に破棄。
 - **音声入力（`SpeechRecognition` / `webkitSpeechRecognition`）**:
-  - 文字入力が苦手な幼児・低学年向けに、画面の「こえで きく（マイクボタン）」から声で質問可能。
-  - `interimResults: true` により、発話中の言葉がリアルタイムにテキストエリアに反映される。
-  - 発話終了（`onend`）で自動的に録音停止・テキスト確定。非対応ブラウザーではボタンを自動非表示。
+  - 文字入力が不慣れな幼児向けに「こえで きく」マイクボタンを設置。
+  - `interimResults: true` で話している途中経過をテキストエリアにリアルタイム反映。
+  - 発話終了（`onend`）で自動確定し、フォーカスをセット。
+  - **セキュアコンテキスト要件**: ブラウザーの仕様上、HTTPS（GitHub Pages など）または `http://localhost` / `http://127.0.0.1` でのみマイク API が有効化される。平文 LAN（`http://192.168.x.x`）や非対応ブラウザーではボタンが自動的に非表示となる。
 
 ### 2.6 「つぎは これを きいてみる？」（関連質問・深掘りチップ）
 
-- 回答受信時、その内容を踏まえて子どもが次に興味を持ちそうな関連疑問（2〜3問）をチップとして自動表示。
-- チップをクリックすると質問欄にテキストが入り、そのまま自動送信されて次の回答をスムーズに調べられる。
-- 疑問文にはルビ（`<ruby>`）が付き、モード（こども向け/中学生向け）に応じた適切な深さの疑問が提示される。
+- 回答受信時、その内容を踏まえて子どもが次に興味を持ちそうな関連疑問（2〜3 問、ルビ付き）を自動生成して表示。
+- チップをタップすると質問欄にセットされ、自動で次の回答を調べる。子どもの知的好奇心を自然に広げる設計。
 
 ### 2.7 状態と操作
 
 | 操作 | 挙動 |
 | --- | --- |
-| 送信 | 入力 2 文字以上で `POST /ask/api/ask`。二重送信は無効化。 |
-| 音声入力 | 「こえで きく」を押して話す。認識結果が質問欄に入り、終了時にフォーカス。 |
-| 関連質問 | チップをタップすると質問欄にセットされ、自動で次の回答を調べる。 |
-| 成功 | 答えを差し替え、ふりがなを付け、関連質問と出典を表示し、自動で読み上げる |
-| 失敗 | `error` にメッセージ。答えは消さない（直前の答えを保持） |
-| `けす` | 入力・答え・出典・関連質問・読み上げを消し、チップを選び直す |
-| `もういちど` | 同じ質問を再送する |
-| 文字数 | 120 文字まで（`maxlength="160"` の textarea を JS 側で 120 に制限し、`n / 120` を表示） |
+| 送信（`おしえて！`） | 入力 2 文字以上で送信処理開始。二重送信は無効化。 |
+| 音声入力（`こえで きく`） | ボタンを押して話すとリアルタイムに入力。終了時に自動確定。 |
+| 関連質問チップ | タップすると質問欄に入力され、自動で次の回答を調べる。 |
+| 成功 | 答えを差し替え、ふりがなを付け、関連質問と出典を表示し、自動で読み上げる。 |
+| 失敗 | `error` にメッセージ。答えは消さない（直前の答えを保持）。 |
+| `けす` | 入力・答え・出典・関連質問・読み上げを消し、チップを選び直す。 |
+| `もういちど` | 同じ質問を Web 検索優先（強制再調査）で再送する。 |
+| 文字数 | 120 文字まで（JS 側で 120 字に制限し、`n / 120` を表示）。 |
 
-### 2.8 デザインの共通ルール（全 8 ページ共通）
+### 2.8 状態の保存とプライバシー方針
 
-- `.back` 丸ボタン（44px、`← どうぐいちらん`）。
-- `h1`: `clamp(30px, 5.2vw, 44px)`、`font-weight: 740`、`letter-spacing: -.05em`。
-- `.lead` / `.intro`: 15px、行間 1.8。
-- body の余白: `24px clamp(16px, 4vw, 54px) 32px`（スマホは `14px …`）。
-- カード: 角丸 20px、`0 8px 28px rgb(39 43 31 / 5%)`。
-
-### 2.8 保存しないもの
-
-`localStorage`、`sessionStorage`、`IndexedDB`、Cookie を一切使わない。
-リロードすると質問も答えも消える（記録はサーバー側に残る）。
+- **方式A（完全クライアント動作 / GitHub Pages / `file://`）**:
+  - サーバーレスで運用するため、保護者設定（API キー、選択モデル、文数上限、パスワードハッシュ）と直近の質問ログ（最大50件）をブラウザーの `localStorage` にのみ保存。
+  - データは一切第三者や外部サーバーへ送信されない。
+- **方式B（ローカルサーバー動作 / `server.py`）**:
+  - ブラウザー側には API キーや質問ログを残さず、サーバー側の `data/config.json`（600）および `data/qa/` に保存。
 
 ---
 
@@ -139,157 +140,104 @@
 
 ### 3.1 内訳
 
-こども（400 問）
-
+こども（400 問）:
 - しぜん・てんき 14 / きせつ 8 / しょくぶつ 8 / どうぶつ 19 / からだ 15 / たべもの 8
 - うちゅう 8 / しくみ・のりもの 12 / ことば・くらし 8 / ちがく・しぜん 32
 - くらし・るーる 18 / おかね・くらし 25 / むかしの はなし 25
-- 小学校の学習内容 100（`// しょうがっこうで まなぶ こと` 以降）
-  - こくご・ことば 15 / さんすう 25 / りか 21 / しゃかい 19 / せいかつ・たいいく・おんがく 20
-- 身近な疑問・追加分 100
-  - からだ・けんこう 15 / どうぶつ・いきもの 15 / しょくぶつ・たべもの 15 /
-    しぜん・うちゅう・のりもの 15 / くらし・みのまわり 15 / ことば・あそび・がっこう 15 /
-    ちきゅう・いきもの・ふしぎ 10
+- 小学校の学習内容 100（こくご・さんすう・りか・しゃかい・せいかつ）
+- 身近な疑問・追加分 100（けんこう・いきもの・うちゅう・くらし・あそび等）
 
-中学生（400 問）
+中学生（400 問）:
+- 物理 22 / 化学 21 / 生物 22 / 地学・宇宙 23 / 数学 8 / 情報・技術 4 / 政治・公民 18 / 地質・地球科学 22 / 発展 10 / 金融・経済 25 / 歴史 25
+- 小学校高学年・中学校の学習内容 100
+- 応用・現代社会の疑問 100（数学情報・物理化学・生体医学・地球環境・地理歴史・政治経済・文化芸術）
 
-- ぶつり 22 / かがく 21 / せいぶつ 22 / ちがく・うちゅう 23 / すうがく 8 /
-  じょうほう・ぎじゅつ 4 / せいじ・こうみん 18 / ちしつ・ちきゅうかがく 22 /
-  はってん 10 / きんゆう・けいざい 25 / れきし 25
-- 小学校の学習内容 100（`// しょうがく こうがくねん` 以降）
-  - こくご 12 / さんすう 20 / りか 30 / しゃかい 28 / おんがく・ずこう・たいいく・がいこくご 10
-- 応用・現代社会の疑問・追加分 100
-  - すうがく・じょうほう・ぎじゅつ 15 / ぶつり・かがく 15 / せいぶつ・いがく・からだ 15 /
-    ちがく・うちゅう・かんきょう 15 / ちり・れきし・こくさい 15 /
-    せいじ・ほうりつ・けいざい 15 / ことば・ぶんか・げいじゅつ 10
+### 3.2 制約と分離計画
 
-### 3.2 制約
-
-- 同一プール内・プール間とも重複させない（`renderChips` が 5 問そろわなくなる）。
-- 追加時は 8 文字インデントの `"…",` を 1 行ずつ並べる。カテゴリはコメントで区切る。
-- サーバー側の変更は不要。追加だけならデプロイ後すぐ反映される。
+- 同一プール内・プール間とも重複させない。
+- 現状は `index.html` 内に静的配列として内蔵（約 87 KB）。
+- ※今後の改訂において、`file://` 起動でも CORS エラーを起こさず読み込めるよう、`<script src="questions.js">` 形式での外部ファイル分離を予定。
 
 ---
 
-## 4. API 仕様
+## 4. API & 通信仕様
 
-すべて同一オリジン（`/ask/api/`）。認証なし。LAN 内のみ。
+### 4.1 方式A：ブラウザー直接通信（GitHub Pages / `file://`）
 
-### 4.1 `GET /ask/api/usage`
+ブラウザーから各公式 API エンドポイントへ直接 HTTPS リクエストを送信する。
 
-当日の累計を返す。nginx で GET のみ許可。
+1. **Google AI Studio（Gemini 無料枠）**:
+   - `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}`
+   - Google Search Grounding (`tools: [{"googleSearch": {}}]`) による公的サイト引用。
+2. **OpenRouter**:
+   - `POST https://openrouter.ai/api/v1/chat/completions`
+   - `plugins: [{"id": "web"}]` による Web 検索引用。
+3. **Wikipedia API**:
+   - `GET https://ja.wikipedia.org/w/api.php?...`（検索結果補完）
 
-```json
-{
-  "ok": true,
-  "spend": 0.565702,
-  "per_question": 0.008894,
-  "remaining": 49,
-  "daily_max": 1.0,
-  "tokens": { "prompt": 0, "completion": 0, "total": 140985,
-              "questions": 0, "cost": 0.0, "measured": 0 }
-}
-```
+※ Content-Security-Policy（CSP）により、上記および `'self'` 以外の外部ホストへの通信はブラウザーが強制遮断する。
 
-### 4.2 `POST /ask/api/ask`
+### 4.2 方式B：ローカルサーバー API（`server.py`）
 
-リクエスト（`Content-Type: application/json`、本文 4,096 バイトまで）
+ローカルで `server.py` を動かす場合の HTTP エンドポイント（待ち受け既定: `127.0.0.1:8787`）。
 
-```json
-{ "question": "なぜ そらは あおいの？", "mode": "kid" }
-```
+- `GET /` / `/index.html` / `/ask` / `/ask/index.html`: Web 画面配信
+- `GET /tests` / `/tests/index.html`: 検証テスト画面配信
+- `GET /ask/api/health`: 稼働確認 `{"ok": true, "spend": ...}`
+- `GET /ask/api/usage`: 当日の累計使用量・概算費用
+- `POST /ask/api/ask`: 質問受付（本文最大 4KB、JSON `{ "question": "...", "mode": "kid"|"teen", "force_search": false }`）
+- `GET /ask/api/admin/state`: 保護者画面の状態・設定・使用量・直近ログ（パスワード設定時はロック）
+- `POST /ask/api/admin/auth`: 管理者パスワード照合
+- `POST /ask/api/admin/config`: プロバイダー・API キー・モデル・文数制限設定の更新
+- `POST /ask/api/admin/password`: 管理者パスワードの登録・変更
 
-- `question`: 2〜120 文字（超過分は切り捨て）。制御文字は空白に置換。
-- `mode`: `kid` | `teen`。不正値は `kid`。
-
-成功時（200）
-
-```json
-{
-  "answer": "…（ふりがな付きの本文）",
-  "verdict": "supported | partly | unsupported | unverified | unchecked | declined | blocked",
-  "sources": ["mext.go.jp", "…"],
-  "source_links": [{"host": "mext.go.jp", "url": "https://…", "title": "…"}],
-  "related_questions": ["関連する質問1（ふりがな付き）", "質問2"],
-  "notice": null,
-  "cost": 0.008894,
-  "tokens": { "prompt": 3906, "completion": 267, "total": 4173, "today": 140985 },
-  "estimate": { "spend": 0.565702, "per_question": 0.008894,
-                "remaining": 49, "daily_max": 1.0, "tokens": { "…": 0 } }
-}
-```
-
-`verdict` の意味
-
-| 値 | 意味 | 画面 |
-| --- | --- | --- |
-| `supported` | 資料で裏づけられた | そのまま表示 |
-| `partly` | 一部だけ裏づけ | そのまま表示 |
-| `unsupported` | 裏づけ不足 | `fixed_answer` があれば差し替え＋注意書き。無ければ「しらべられなかった」 |
-| `unverified` | 検証できなかった | 注意書きのみ |
-| `unchecked` | 検証処理が失敗 | 注意書きのみ |
-| `declined` | 入口の分類で辞退 | 定型文（性的・自傷・犯罪手順・政治意見） |
-| `blocked` | 最終安全チェックで遮断 | 定型文 |
-
-エラー
-
-| status | `error` | 画面の文言 |
-| --- | --- | --- |
-| 400 | `empty` / `bad-body` / `bad-json` | `しりたい ことを かいてね。` など |
-| 429 | `rate` | `いま たくさん きいてくれて いるね。…` |
-| 503 | `busy` / `budget` | `いま いそがしいみたい。…` / `きょうは たくさん おしゃべりしたから…` |
-| 502 | `upstream` | `ごめんね。いま しらべられなかったよ。…` |
-| 404 | `not-found` | — |
-
-### 4.3 保護者・管理者用 API（`/ask/api/admin/*`）
-
-- `GET /ask/api/admin/state`: 設定値・モデル候補（`catalog`）・使用量・直近の検索ログ（日時・質問・回答・消費トークン）を返す。パスワード設定時は `X-Admin-Token` ヘッダーが無ければ `{"locked": true, "has_password": true}` のみ返す。
-- `POST /ask/api/admin/auth`: パスワードを照合し、メモリ内セッショントークン（有効 12 時間）と状態一式を返す。
-- `POST /ask/api/admin/config`: プロバイダー（`provider`: `google` または `openrouter`）、APIキー（`google_api_key` または `openrouter_api_key`）、回答モデル（`answer_model`）、検証モデル（`verify_model`）、こども・中学生それぞれの最大文数（`kid_sentences` / `teen_sentences`）と最大文字数（`kid_chars` / `teen_chars`）を `config.json` に保存し即時反映する。
-- `POST /ask/api/admin/password`: 管理者パスワード（4〜64 文字、空欄で解除）を PBKDF2-HMAC-SHA256（120,000 回反復＋16 バイト乱数ソルト）でハッシュ化して `config.json` に保存する。
-
-### 4.4 `GET /ask/api/health`
-
-LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
-
-### 4.4 制限
+#### 制限値（サーバーモード）
 
 | 項目 | 値 | 実装 |
 | --- | --- | --- |
-| レート | 6 問 / 60 秒 / 送信元 IP | `ask_proxy.py` の `rate_ok` |
-| 同時実行 | 2 | `MAX_CONCURRENT`（待ち 8 秒で 503） |
-| 1 日の費用 | `ASK_DAILY_USD_MAX`（既定 1.00 USD） | 超過で 503 `budget` |
-| 本文 | 4,096 バイト | `BODY_MAX` |
-| nginx | 20 r/m、burst 10 | `limit_req_zone ask_api` |
-
-送信元 IP は、転送元がループバックのときだけ `X-Real-IP` を信頼する
-（nginx 経由の全リクエストが `127.0.0.1` 扱いになり、家中で 1 つの制限に
-まとまってしまうのを防ぐ）。IPv4/IPv6 の文字種を検査してから採用する。
+| レート制限 | 6 問 / 60 秒 / IP | `server.py` `rate_ok` |
+| 同時実行 | 2 | `_sem`（待ち 8 秒で 503） |
+| 1 日の費用上限 | `ASK_DAILY_USD_MAX`（既定 1.00 USD） | 超過で 503 `budget` |
+| 本文サイズ | 4,096 バイト | `BODY_MAX` |
 
 ---
 
 ## 5. 回答パイプライン
 
-1. **分類＋Web検索要否判定＋検索語生成**（`classify_and_rewrite_ex`、1 コール）
-   `category`、`needs_search`（時事・統計等の検索要否）、`query` を同時に作る。
-   `sexual` / `selfharm` / `crime_howto` / `politics_opinion` はここで確定し、以降の外部呼び出しをせず定型文を返す。
-2. **常識回答＋知識ベリファイ（`needs_search == false` の場合、省トークン経路）**
-   - `ask_with_knowledge`: Web 検索プラグインを使わず、確かな常識・教科書の知識だけで回答を生成する（モデル自身が検索必要と判断した場合は `NEED_SEARCH` を出力して 3. へ自動フォールバック）。
-   - `verify_knowledge`: 検証モデル（`verify_model`）の知識で事実関係と読みがな（`wrong_readings`）を照合する。`unsupported`（知識だけでは裏づけ不可）と判定された場合は 3. の Web 検索経路へ自動フォールバックする。
-3. **検索付き回答＋資料ベリファイ（`needs_search == true` またはフォールバック時）**
-   - `ask_with_search`: `web` プラグイン＋`SITE_BIAS`（公的機関を優先する `site:` 指定）。公的機関の出典が `MIN_PUBLIC_SOURCES`（2）未満なら、指定なしで 1 回だけ再検索する。
-   - `verify`: 回答と検索スニペットを突き合わせ、`supported` / `partly` / `unsupported` と `fixed_answer`、`wrong_readings`、`missing_readings`（ふりがな漏れ漢字）を返す。
-4. **ふりがな保証と文数・字数の整形**（`sentences`、`find_unannotated_kanji`、`fill_missing_ruby`）
-   - 回答モデルのプロンプトで「すべての漢字に『漢字(よみ)』の形式で読みがなを付けること（ふりがなのない漢字の放置を厳禁）」を最優先ルールとして強制。
-   - ベリファイモデルが `missing_readings` を検出した場合は `fixed_answer` でふりがな付き修正文を提供し、採用する。
-   - 難問や時事ニュースで生成モデル・ベリファイモデルがふりがなを落とした場合でも、`find_unannotated_kanji` で未注記漢字を検出し、`fill_missing_ruby` が文章内容を変えずにルビだけを自動補完する。
-   - `wrong_readings`（誤った読み）は正規表現でその場で読みだけ外す。
-5. **最終安全チェック**（`safety_check`、政治・犯罪系のみ）
-   `unsafe` なら `blocked` にして定型文へ。
-6. **記録**（`_finish` → `log_qa`）
-   成功・失敗を問わず、`answer_type`（`knowledge` / `search`）を含めて 1 リクエスト 1 行を残す。
+サーバー側（`server.py`）およびクライアント直接実行側（`index.html`）の双方が、同一の多段防御パイプラインを備えている。
 
-タイムアウト: 回答 45 秒、検証 25 秒。
+```mermaid
+flowchart TD
+    A["入力質問"] --> B["1. 入口判定 & プロンプトインジェクション検査"]
+    B -->|不審な指示・有害| C["定型辞退文 (declined)"]
+    B -->|正常| D{"2. 検索要否判定 (needs_search)"}
+    D -->|普遍的常識| E["3a. 常識回答 + 知識ベリファイ (省トークン)"]
+    D -->|時事・最新・要検索| F["3b. Web検索 + 資料ベリファイ"]
+    E -->|知識だけでは裏づけ困難| F
+    E --> G["4. ふりがな (ルビ) 多重保証"]
+    F --> G
+    G --> H["5. 最終安全チェック (政治・犯罪等)"]
+    H -->|安全| I["6. 画面表示 & 関連質問提案 & 読み上げ"]
+    H -->|不適切| J["定型ブロック文 (blocked)"]
+```
+
+1. **分類＋Web 検索要否判定＋検索語生成**:
+   - `category`、`needs_search`（時事・統計等の検索要否）、`query` を判定。
+   - 性的・自傷・犯罪手順・政治意見はここで遮断し、外部呼び出しを行わず定型文を返す。
+2. **常識回答＋知識ベリファイ（`needs_search == false`）**:
+   - 自然科学の基本や普遍的事実は Web 検索プラグインを使わず回答・検証（トークン消費を約 1/3〜1/5 に削減）。
+   - 知識だけでは十分な裏づけが得られない場合、自動的に Web 検索経路へフォールバック。
+3. **検索付き回答＋資料ベリファイ（`needs_search == true` またはフォールバック時）**:
+   - Google Search Grounding または OpenRouter Web プラグイン＋公的機関バイアス（`site:go.jp`、大学、研究機関）で検索。
+   - 資料スニペットと回答を照合し、事実関係とふりがなを厳格に検査。
+4. **ふりがな（ルビ）多重保証**:
+   - ① 生成プロンプトでの漢字単独使用禁止の強制。
+   - ② ベリファイモデルによるふりがな漏れ検査（`missing_readings`）。
+   - ③ 未注記漢字の自動検出と文章を変えないルビ自動補完（`fill_missing_ruby`）。
+5. **最終安全チェック**:
+   - 回答本文が子どもの閲覧に適しているかを最終確認。
+6. **記録**:
+   - 質問・回答・消費トークン・判定（`verdict`）・出典を記録（方式Aは `localStorage`、方式Bは `data/qa/`）。
 
 ---
 
@@ -297,129 +245,161 @@ LXC 内（127.0.0.1）専用。`{"ok": true, "spend": {…}}`。
 
 | 種類 | 入口の判定 | 応答 |
 | --- | --- | --- |
+| プロンプトインジェクション | `LOCAL_INJECTION_RE`、システム指示変更要求 | 辞退（指示の変更には対応できない旨の定型文） |
 | 性的な内容 | `SEXUAL_RE` と分類 | 辞退（定型文） |
-| 自傷・死にたい | `SELFHARM_RE` と分類 | 辞退。大人・相談窓口へ |
-| 犯罪の手順 | `CRIME_HOWTO_RE` と分類 | 辞退。手順・回避のこつは書かない |
+| 自傷・死にたい | `SELFHARM_RE` と分類 | 辞退。大人・公的相談窓口の案内 |
+| 犯罪の手順 | `CRIME_HOWTO_RE` と分類 | 辞退。手順や回避のこつは書かない |
 | 犯罪の理由・仕組み | `crime_fact` | 事実として回答（手順は書かない） |
 | 政治の意見・評価 | `POLITICS_RE` と分類 | 辞退。制度・事実は中立に回答 |
-| 政治の制度・事実 | `politics_fact` | 中立に回答（`POLITICS_ADDENDUM`） |
+| 政治の制度・事実 | `politics_fact` | 中立に回答 |
 
-- 正規表現は「明らかなもの」を外部送信前に止めるための第一関門。判断の主軸は分類モデル。
-- `safety_check` は回答本文の最終確認。政治・犯罪カテゴリでのみ呼ぶ。
-- 辞退文はモード別（`DECLINE_MESSAGES` / `DECLINE_MESSAGES_TEEN`）。
+- **タグ隔離**: ユーザー入力に含まれる `<` `>` は `＜` `＞` に全角置換し、プロンプト内の `<question>` タグから脱出できないよう隔離。
+- **検索演算子サニタイズ**: `site:`, `filetype:` などの意図しない演算子を無効化。
+- **出典の公的機関優先**: 文部科学省、国立天文台、JAXA、大学、研究機関などの公的ドメインを優先して引用。
 
 ---
 
-## 7. プロバイダー・モデル・上限・環境変数
+## 7. プロバイダー・モデル・設定
 
 ### 7.1 対応プロバイダー
 
 1. **Google AI Studio（Gemini 無料枠あり）**:
    - エンドポイント: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-   - 回答モデル候補: `gemini-2.5-flash`（標準・おすすめ）、`gemini-2.5-flash-lite`（高速・軽量）、`gemini-2.0-flash`（安定）
-   - 検証モデル候補: `gemini-2.5-flash-lite`（高速検証）、`gemini-2.5-flash`（標準検証）、`gemini-2.0-flash`
-   - Web 検索: `tools: [{"googleSearch": {}}]`（Google Search Grounding）による公的サイト引用
+   - 回答モデル候補: `gemini-2.5-flash`（標準・推奨）、`gemini-2.5-flash-lite`（高速・軽量）、`gemini-2.0-flash`
+   - 検証モデル候補: `gemini-2.5-flash-lite`（高速検証）、`gemini-2.5-flash`
    - 費用: **無料枠（1日 1,500 回まで費用 $0.00）**
+   - Web 検索: Google Search Grounding による公式引用
 2. **OpenRouter（多様なオープンモデル・従量課金）**:
    - エンドポイント: `https://openrouter.ai/api/v1/chat/completions`
    - モデル候補: `z-ai/glm-5.3-flash`, `google/gemini-2.5-flash`, `openai/gpt-6-luna`, `qwen/qwen3.5-flash-02-23`, `mistralai/ministral-8b-2512` 等
    - Web 検索: `plugins: [{"id": "web"}]`
 
-### 7.2 環境変数
+### 7.2 設定の優先順位
 
-`/etc/draw-pad/ai/ai.env`（`root:draw-pad-ai` 640）またはローカル環境
+- **方式A（クライアント直）**: 画面下部の「おうちの ひとへ（管理・ログ）」から設定（`localStorage` に保存）。
+- **方式B（ローカルサーバー）**: `data/config.json` > 環境変数 / `.env`。
 
-| 変数 | 既定 | 用途 |
+---
+
+## 8. 記録とログ管理
+
+### 8.1 方式A（完全クライアント動作）
+
+- ブラウザーの `localStorage`（`kids_ask_pad_logs_v1`）に直近最大 50 件のログを JSON 形式で保存。
+- 保存項目: 日時（`ts`）、モード（`mode`）、回答種別（`answer_type`）、質問（`q`）、回答（`a`）、判定（`verdict`）、トークン数（`tokens`）。
+- 管理者画面で閲覧可能。外部送信は一切行わない。
+
+### 8.2 方式B（ローカルサーバー動作）
+
+- 保存先: `./data/` 配下
+  - `data/qa/qa-YYYY-MM-DD.jsonl`: 1 リクエスト 1 行。180 日経過で自動削除。パーミッション 600。
+  - `data/spend.json`: 日付ごとの累計費用（USD）。
+  - `data/tokens.json`: 当日のトークン集計。
+  - `data/config.json`: 管理者設定・ハッシュ化パスワード。
+
+---
+
+## 9. セキュリティ仕様
+
+### 9.1 Web / ブラウザー側のセキュリティ（GitHub Pages & 共通）
+
+- **Content-Security-Policy (CSP)**:
+  `<meta http-equiv="Content-Security-Policy">` により、接続先を厳格にホワイトリスト化。
+  ```text
+  default-src 'none';
+  script-src 'self' 'unsafe-inline';
+  style-src 'self' 'unsafe-inline';
+  connect-src 'self' https://generativelanguage.googleapis.com https://openrouter.ai https://ja.wikipedia.org;
+  img-src 'self' data: https:;
+  font-src 'self';
+  base-uri 'none';
+  form-action 'none';
+  ```
+- **X-Content-Type-Options**: `nosniff` を設定。
+- **Referrer-Policy**: `strict-origin-when-cross-origin` を設定し、外部 API や外部リンクへの不要な URL 漏洩を防止。
+- **クリックジャッキング防止（Frame-busting）**:
+  悪意あるサイトが iframe で本ツールを埋め込み、API キーや入力を盗取するクリックジャッキング攻撃を防ぐため、フレーム内呼び出しを検知してリダイレクトまたは非表示化。
+  ```javascript
+  if (window.top !== window.self) {
+    try { window.top.location = window.self.location; }
+    catch (_) { document.documentElement.style.display = "none"; }
+  }
+  ```
+
+### 9.2 Git / GitHub リポジトリセキュリティ
+
+- **Secret Scanning & Push Protection**: API キーや秘密鍵の誤コミット・プッシュを GitHub 側でブロック。
+- **Dependabot セキュリティ更新**: 依存脆弱性の自動検知・警告。
+- **Private Vulnerability Reporting**: セキュリティ問題の非公開報告窓口を提供（`SECURITY.md` を配備）。
+- **Branch Protection**: `main` ブランチへの強制プッシュ（Force push）および削除を禁止。
+- **厳格な `.gitignore`**: `*.env*`, `ai.env`, `*.key`, `*.pem`, `credentials*.json`, `*.log`, `data/` を網羅的に除外。
+
+### 9.3 サーバー側のセキュリティ（`server.py`）
+
+- **バインド制限**: 既定では `127.0.0.1:8787` で待ち受け、外部からの直接アクセスを遮断。
+- **管理者認証**: PBKDF2-HMAC-SHA256（120,000 回反復＋16 バイト乱数ソルト）によるパスワード保護。
+- **セッショントークン**: 認証後はメモリ内トークン（有効 12 時間）を発行し、ファイル等には残さない。
+
+---
+
+## 10. 非機能要件
+
+| 項目 | 目標・実測値 | 備考 |
 | --- | --- | --- |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | — | Google AI Studio API キー |
-| `OPENROUTER_API_KEY` | — | OpenRouter API キー |
-| `ASK_ANSWER_MODEL` | `z-ai/glm-5.3-flash` | OpenRouter 回答標準モデル |
-| `ASK_ANSWER_FALLBACK` | `qwen/qwen3.5-flash-02-23` | 回答の代替 |
-| `ASK_QUERY_MODEL` | `z-ai/glm-5.3-flash` | 分類＋検索語 |
-| `ASK_VERIFY_MODEL` | `mistralai/ministral-8b-2512` | OpenRouter 検証標準モデル |
-| `ASK_WEB_RESULTS` | `5` | 検索件数 |
-| `ASK_DAILY_USD_MAX` | `1.00` | 1 日の費用上限（OpenRouter 利用時） |
-| `ASK_PER_QUESTION_EST` | `0.0085` | 実測が無い日の 1 問単価 |
-| `ASK_LOG_KEEP_DAYS` | `180` | 記録の保持日数 |
-| `ASK_LISTEN_HOST` / `ASK_LISTEN_PORT` | `127.0.0.1` / `8787` | 待ち受け |
-| `ASK_STATE_DIR` | `/var/lib/draw-pad-ai` または `./data` | 状態と記録 |
+| 応答時間 | 5〜15 秒（検索・回答・検証の合計） | 常識回答時は 3〜6 秒で高速応答 |
+| 1 問のトークン | 1,500〜5,000 トークン | 常識回答時は Web 検索時より大幅に削減 |
+| 1 問の費用 | $0.00（Google AI Studio 無料枠）または約 $0.003〜0.008（OpenRouter） | 無料枠なら 1 日 1,500 問まで完全無料 |
+| 動作環境（サーバー） | Python 3.8 以上（標準ライブラリのみ、OS 問わず動作） | メモリ数十 MB 程度で軽量動作 |
+| 動作環境（ブラウザー） | Chrome, Edge, Safari, Firefox の各最新版 | PC, タブレット（iPad/Android）, スマホ対応 |
 
 ---
 
-## 8. 記録と状態
+## 11. 開発・デプロイ手順
 
-`/var/lib/draw-pad-ai/`
+### 11.1 ローカル開発と検証
 
-| ファイル | 内容 |
-| --- | --- |
-| `qa/qa-YYYY-MM-DD.jsonl` | 1 リクエスト 1 行。180 日で自動削除。 |
-| `spend.json` | 日付ごとの累計費用（USD） |
-| `tokens.json` | 当日の `prompt` / `completion` / `total` / `questions` / `cost` / `measured` |
+1. **ローカルサーバー起動**:
+   ```powershell
+   python server.py
+   ```
+   ブラウザーで `http://127.0.0.1:8787/` を開いて動作確認。
+2. **静的検証・テスト**:
+   - Python 構文チェック:
+     ```powershell
+     python -m py_compile server.py
+     ```
+   - ブラウザー内自動検証テスト:
+     ブラウザーで `tests/index.html`（または `http://127.0.0.1:8787/tests/`）を開き、質問プール件数・重複・ルビ・管理パネルの存在などの自動テスト（全項目 PASS）を確認。
 
-`qa-*.jsonl` のフィールド
+### 11.2 リリース手順（GitHub Pages）
 
-```json
-{"ts":"2026-11-12T12:36:00+09:00","ip":"127.0.0.1","mode":"kid",
- "category":"ok","q":"…","query":"…","a":"…","verdict":"supported",
- "notice":null,"sources":["mext.go.jp"],"cost":0.008894,"tokens":4173,
- "status":200,"ms":8612}
-```
-
-- 記録は応答を返す直前に行う（失敗リクエストも残る）。
-- パーミッションは 700/600。バックアップ対象。
-
----
-
-## 9. セキュリティ
-
-- ネットワーク制限: ローカル起動時は 127.0.0.1 または信頼されたローカルNWのみ許可。
-- メソッド制限: `/ask/api/usage` は GET のみ、`/ask/api/*` は POST のみ。
-- CSP: `default-src 'none'`。`script-src` は **7 ページ分の SHA-256 ハッシュ**のみ。
-  `connect-src 'self'`、`style-src 'unsafe-inline'`、`img-src` はページ別、
-  `base-uri 'none'`、`frame-ancestors 'none'`、`form-action 'none'`。
-- 秘密情報は HTML に置かない。API キーは systemd の `EnvironmentFile` 経由でプロセスだけが持つ。
-- 回答本文から URL・ドメイン名・Markdown 装飾を除去してから表示する。
-- 例外: `/mnt` などへの外部公開はしない。`0.0.0.0` では待ち受けない。
-
-### CSP ハッシュの更新（スクリプトを変えたとき）
-
-1. ページの `<script>…</script>` の**本文だけ**を取り、改行を LF に正規化する。
-2. UTF-8 バイト列の SHA-256 を Base64 化し、`sha256-…` にする。
-3. `nginx-draw-pad.conf` の該当ハッシュを差し替える（7 件のうち 1 件）。
-4. 配置 → `nginx -t` → `systemctl reload nginx` → 実際に動くか確認。
+1. 変更ファイルをステージング・コミット:
+   ```powershell
+   git add index.html server.py docs/SPEC.md
+   git commit -m "feat/fix: ..."
+   ```
+2. `main` ブランチへプッシュ:
+   ```powershell
+   git push origin main
+   ```
+3. GitHub Actions のデプロイ完了を確認:
+   ```powershell
+   gh run list --repo YM86/kids-ask-pad --limit 1
+   ```
+4. 公開環境（`https://ym86.github.io/kids-ask-pad/`）で表示と動作を確認。
 
 ---
 
-## 10. 非機能
+## 12. 既知の制約と今後のロードマップ
 
-| 項目 | 実測・目標 |
-| --- | --- |
-| 応答時間 | 5〜20 秒（検索＋回答＋検証の合計）。中央値 8 秒前後 |
-| 1 問のトークン | 4,000〜9,000 |
-| 1 問の費用 | $0.008〜0.009 |
-| 1 日の上限 | $1.00（約 110 問） |
-| 同時利用 | 2 リクエストまで |
-| メモリ | LXC 192 MB。systemd の名前空間系サンドボックスは使わない（226/NAMESPACE） |
-
----
-
-## 11. 変更手順（要約）
-
-1. `E:\AI\draw-pad` のファイルを編集する。
-2. スクリプトを変えたら CSP ハッシュを再計算し、`ask-server/nginx-draw-pad.conf` を更新する。
-3. `scp` で proxmox へ送り、`pct push 101` で LXC へ配置する。
-4. 旧版を `*.previous.*` に控えてから上書きする。
-5. `nginx -t` → `systemctl reload nginx`。
-6. 検証: 全 8 ルート 200、配信 HTML とローカルのバイト一致、CSP 7 ハッシュ、
-   ヘッドレス Chrome の DOM（チップ 5 件・使用量バー・コンソールエラーなし）、
-   実 API 1 問（`verdict` と出典）。
-
----
-
-## 12. 既知の制約
-
-- HTTP のため音声入力（`getUserMedia`）は使えない。HTTPS 化とローカル CA の信頼が前提。
-- 読み上げは端末の音声に依存する。iOS Safari は自動再生が制限される。
-- 回答は生成モデル由来のため、`supported` でも表現の揺れがある。
-  事実の最終確認は出典リンクと大人の目で行う。
-- 質問プールはブラウザー内の静的配列。増やすとページサイズが増える（現在 約 87 KB）。
+1. **音声入力のセキュアコンテキスト制約**:
+   - Web Speech API のマイク機能は、ブラウザーの仕様上セキュアコンテキスト（HTTPS または `localhost`）が必須。
+   - GitHub Pages（`https://...`）やローカル起動（`http://localhost:8787/`）では問題なく動作する。
+   - 家庭内 LAN の平文 HTTP（例: `http://192.168.x.x:8787/`）で iPad 等からアクセスした場合、ブラウザーがマイク API をブロックするためボタンが自動非表示となる。LAN 内で音声入力を使う場合は、リバースプロキシで HTTPS 化（オレオレ証明書またはローカル CA）するか、GitHub Pages 経由で利用する。
+2. **質問プールの外部ファイル分離（計画中）**:
+   - 現在、800 問の質問プール（約 87 KB）が `index.html` に直接埋め込まれている。
+   - 今後の改訂で、`file://` 起動でも CORS 制限を受けないよう、`<script src="questions.js"></script>` 形式の外部 JS ファイルとして分離し、本体 HTML の軽量化と差分管理の容易化を図る。
+3. **最小限の CI 自動テスト導入（計画中）**:
+   - `.github/workflows/` に Python の構文チェック（`py_compile`）およびプールの整合性チェックを組み込み、PR/push 時の自動回帰テストを導入する。
+4. **読み上げのプラットフォーム差**:
+   - iOS Safari 等の一部モバイルブラウザーでは、ユーザー操作（タップ）を契機としない自動読み上げが制限される場合がある（その場合は「よみあげ」ボタンの手動タップで再生可能）。
