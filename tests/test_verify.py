@@ -30,10 +30,10 @@ def test_questions_pool():
     q_list = [s.strip().strip('"').rstrip('",') for s in re.findall(r'^\s*"[^"]+",', q_m.group(1), re.M)]
     teen_list = [s.strip().strip('"').rstrip('",') for s in re.findall(r'^\s*"[^"]+",', teen_m.group(1), re.M)]
 
-    assert len(q_list) == 450, f"Expected 450 kid questions, got {len(q_list)}"
-    assert len(teen_list) == 450, f"Expected 450 teen questions, got {len(teen_list)}"
-    assert len(set(q_list)) == 450, f"Kid pool has duplicates: {450 - len(set(q_list))}"
-    assert len(set(teen_list)) == 450, f"Teen pool has duplicates: {450 - len(set(teen_list))}"
+    assert len(q_list) == 550, f"Expected 550 kid questions, got {len(q_list)}"
+    assert len(teen_list) == 550, f"Expected 550 teen questions, got {len(teen_list)}"
+    assert len(set(q_list)) == 550, f"Kid pool has duplicates: {550 - len(set(q_list))}"
+    assert len(set(teen_list)) == 550, f"Teen pool has duplicates: {550 - len(set(teen_list))}"
 
     cross = set(q_list).intersection(set(teen_list))
     assert len(cross) == 0, f"Found overlapping questions across pools: {cross}"
@@ -41,7 +41,7 @@ def test_questions_pool():
     kanji_in_kid = [q for q in q_list if re.search(r"[\u4e00-\u9fff]", q)]
     assert len(kanji_in_kid) == 0, f"Found kanji in kid questions: {kanji_in_kid}"
 
-    print(f"[PASS] questions.js integrity check (450 kid questions, 450 teen questions, 0 duplicates, 0 kanji in kid pool)")
+    print(f"[PASS] questions.js integrity check (550 kid questions, 550 teen questions, 0 duplicates, 0 kanji in kid pool)")
 
 
 def test_index_html():
